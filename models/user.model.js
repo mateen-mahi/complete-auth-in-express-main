@@ -28,11 +28,23 @@ const userSchema = new mongoose.Schema({
   gender :{
     type: String,
   },
-  lastTimeLogin : Date,
-forgotPasswordToken:String,
+  role : {
+    type: String,
+    default: "user",
+  },
+  loginHistory: [
+    {
+      loginTime: Date,
+      ipAddress: String,
+      location: String,
+    },
+  ],
+  forgotPasswordToken:String,
   forgotPasswordTokenExpiry:Date,
   verifyToken:String,
   verifyTokenExpiry:Date,
+  refreshToken:String,
+  refreshTokenExpiry:Date,
   isVerified: {
     type: Boolean,
     default: false,
