@@ -28,7 +28,6 @@ userRoutes.post("/forgot-password", ForgotPasswordController);
 userRoutes.post("/reset-password", ResetPasswordController);
 userRoutes.get("/check-auth",verifyAuth, CheckAuthController);
 userRoutes.post("/verify-user",verifyUser);
-userRoutes.post("/again-send-otp",verifyUser);
 
 
 // userRoutes.get("/all-users", verifyAuth, getAllUsers);
