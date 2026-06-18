@@ -19,7 +19,7 @@ userRoutes.post("/reset-password", ResetPasswordController);
 userRoutes.get("/all-users",verifyAuth,AllUsersController);
 userRoutes.get("/check-auth",verifyAuth, CheckAuthController);
 userRoutes.post("/verify-user",verifyUser);
-
+userRoutes.post("/again-send-otp",verifyUser);
 
 
 export default userRoutes;
