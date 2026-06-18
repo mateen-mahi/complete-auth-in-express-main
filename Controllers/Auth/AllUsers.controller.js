@@ -72,31 +72,31 @@ export const deleteAllUsers = async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // 5. UPDATE USER ROLE (Admin Se Role Modifying Handle Ke Liye)
 // ─────────────────────────────────────────────────────────────
-export const updateUserRole = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { role } = req.body; // expected: "end-user" | "admin" | "super-admin"
+// export const updateUserRole = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { role } = req.body; // expected: "end-user" | "admin" | "super-admin"
 
-    if (!role) {
-      return res.status(400).json({ success: false, message: "Target role permission payload is missing" });
-    }
+//     if (!role) {
+//       return res.status(400).json({ success: false, message: "Target role permission payload is missing" });
+//     }
 
-    const updatedUser = await userModel.findByIdAndUpdate(
-      id,
-      { role },
-      { new: true, runValidators: true }
-    ).select("-password -__v");
+//     const updatedUser = await userModel.findByIdAndUpdate(
+//       id,
+//       { role },
+//       { new: true, runValidators: true }
+//     ).select("-password -__v");
 
-    if (!updatedUser) {
-      return res.status(404).json({ success: false, message: "User context not found to upgrade permissions" });
-    }
+//     if (!updatedUser) {
+//       return res.status(404).json({ success: false, message: "User context not found to upgrade permissions" });
+//     }
 
-    return res.status(200).json({ success: true, message: "Role privileges updated successfully", user: updatedUser });
-  } catch (error) {
-    console.log("Error in update role api: ", error);
-    return res.status(500).json({ success: false, message: "Server error during cluster role modification" });
-  }
-};
+//     return res.status(200).json({ success: true, message: "Role privileges updated successfully", user: updatedUser });
+//   } catch (error) {
+//     console.log("Error in update role api: ", error);
+//     return res.status(500).json({ success: false, message: "Server error during cluster role modification" });
+//   }
+// };
 
 // ─────────────────────────────────────────────────────────────
 // 6. EDIT/UPDATE USER (User Profile Data Edit/Modify Karne Ke Liye)

@@ -10,8 +10,7 @@ import  verifyUser  from "../Controllers/Auth/VerifyUser.controller.js";
 import { 
   getAllUsers, 
   getSingleUser, 
-  editUser, 
-  updateUserRole, 
+  editUser,  
   deleteUser, 
   deleteAllUsers 
 } from "../Controllers/Auth/AllUsers.controller.js"; 
@@ -40,9 +39,6 @@ userRoutes.post("/again-send-otp",verifyUser);
 // userRoutes.delete("/clear-all-users", verifyAuth, deleteAllUsers);
 
 
-// ─────────────────────────────────────────────────────────────
-// 👤 USER OPERATIONS (With verifyAuth Middleware)
-// ─────────────────────────────────────────────────────────────
 userRoutes.get("/all-users", verifyAuth, getAllUsers);
 userRoutes.get("/single-user/:id", verifyAuth, getSingleUser);
 userRoutes.put("/edit-user/:id", verifyAuth, editUser);
