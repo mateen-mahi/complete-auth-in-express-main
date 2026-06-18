@@ -17,9 +17,28 @@ const signinController = async (req, res) => {
     if (!user) {
       return res.status(404).json("User not found");
     }
-    if (!user.isVerified) {
-      return res.status(403).json("Please verify your email before signing in");
-    }
+
+if (!user.isVerified) {
+  const verifyToken = Math.floor(100000 + Math.random() * 900000).toString(); 
+  const verifyTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  user.verifyToken = verifyToken;
+  user.verifyTokenExpiry = verifyTokenExpiry;
+  await user.save();
+
+  await verifyMailSender(verifyToken, user.email);
+
+  return res.status(200).json({
+    message: "Your account is not verified yet. We have sent a fresh OTP.",
+    redirectToVerification: true,
+    email: user.email
+  })};
+
+
+
+
+
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(400).json("Invalid credentials");

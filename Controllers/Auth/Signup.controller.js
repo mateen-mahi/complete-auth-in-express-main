@@ -11,9 +11,30 @@ const SignupController = async (req, res) => {
       return res.status(400).json("Please fill out all fields");
     }
 
-      const existingUser = await userModel.findOne({ email });
+    const existingUser = await userModel.findOne({ email });
     if (existingUser) {
-      return res.status(400).json("An account with this email already exists");
+      if (!existingUser.isVerified) {
+        const verifyToken = Math.floor(
+          100000 + Math.random() * 900000,
+        ).toString();
+        const verifyTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        existingUser.verifyToken = verifyToken;
+        existingUser.verifyTokenExpiry = verifyTokenExpiry;
+        await existingUser.save();
+
+        await verifyMailSender(verifyToken, existingUser.email);
+
+        return res.status(200).json({
+          message:
+            "Your account is not verified yet. We have sent a fresh OTP.",
+          redirectToVerification: true,
+          email: existingUser.email,
+        })};
+
+      return res
+        .status(400)
+        .json({ message: "This email is already registered. Please sign in." });
     }
 
     const hashPassword = await bcrypt.hash(password, 10);
@@ -29,12 +50,14 @@ const SignupController = async (req, res) => {
       verifyTokenExpiry,
     });
 
-        try {
+    try {
       await verifyMailSender(verifyToken, storedUser.email);
     } catch (mailError) {
-      console.error("Mail delivery failed but user record was created:", mailError);
+      console.error(
+        "Mail delivery failed but user record was created:",
+        mailError,
+      );
     }
-
 
     console.log("User  created Successfully");
 
@@ -43,8 +66,6 @@ const SignupController = async (req, res) => {
     console.log("Error While Posting user Model , Error: ", error);
     res.status(500).json("Server Error");
   }
-
 };
-
 
 export default SignupController;
