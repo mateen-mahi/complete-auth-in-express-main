@@ -6,7 +6,8 @@ import SignoutController from "../Controllers/Auth/Signout.controller.js";
 import ForgotPasswordController from "../Controllers/Auth/ForgotPassword.controller.js";
 import ResetPasswordController from "../Controllers/Auth/ResetPassword.controller.js";
 import CheckAuthController from "../Controllers/Auth/CheckAuth.controller.js";
-import  verifyUser  from "../Controllers/Auth/VerifyUser.controller.js";
+import  OtpSenderController from "../Controllers/Auth/SendingOTP.controller.js";
+import VerifyUserController from "../Controllers/Auth/verifyUser.controller.js";
 import { 
   getAllUsers, 
   getSingleUser, 
@@ -27,7 +28,8 @@ userRoutes.post("/signout", SignoutController);
 userRoutes.post("/forgot-password", ForgotPasswordController);
 userRoutes.post("/reset-password", ResetPasswordController);
 userRoutes.get("/check-auth",verifyAuth, CheckAuthController);
-userRoutes.post("/verify-user",verifyUser);
+userRoutes.post("/send-verify-otp",OtpSenderController);
+userRoutes.post("/verify-user", VerifyUserController);
 
 
 // userRoutes.get("/all-users", verifyAuth, getAllUsers);

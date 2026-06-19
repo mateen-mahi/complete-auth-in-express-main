@@ -23,7 +23,7 @@ const SignupController = async (req, res) => {
         existingUser.verifyTokenExpiry = verifyTokenExpiry;
         await existingUser.save();
 
-        await verifyMailSender(verifyToken, existingUser.email);
+        verifyMailSender(verifyToken, existingUser.email);
 
         return res.status(200).json({
           message:
@@ -50,14 +50,9 @@ const SignupController = async (req, res) => {
       verifyTokenExpiry,
     });
 
-    try {
-      await verifyMailSender(verifyToken, storedUser.email);
-    } catch (mailError) {
-      console.error(
-        "Mail delivery failed but user record was created:",
-        mailError,
-      );
-    }
+    
+      verifyMailSender(verifyToken, storedUser.email);
+ 
 
     console.log("User  created Successfully");
 

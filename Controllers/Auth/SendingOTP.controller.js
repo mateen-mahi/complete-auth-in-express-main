@@ -2,7 +2,7 @@ import userModel from "../../models/user.model.js";
 import { verifyMailSender } from "../../utils/mailSender.js";
 
 
-const VerifyUserController = async (req, res) => {
+const OtpSenderController = async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
@@ -27,4 +27,4 @@ const VerifyUserController = async (req, res) => {
 };
 
 
-export default VerifyUserController;
+export default OtpSenderController;
