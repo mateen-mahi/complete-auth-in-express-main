@@ -26,7 +26,7 @@ if (!user.isVerified) {
   user.verifyTokenExpiry = verifyTokenExpiry;
   await user.save();
 
-  await verifyMailSender(verifyToken, user.email);
+   verifyMailSender(verifyToken, user.email);
 
   return res.status(200).json({
     message: "Your account is not verified yet. We have sent a fresh OTP.",
