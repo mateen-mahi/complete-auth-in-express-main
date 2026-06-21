@@ -24,19 +24,24 @@ const SignoutController = async (req, res) => {
       }
     }
 
-    res.clearCookie("accessToken", {
-      path: "/",
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    const isProduction = process.env.NODE_ENV === "production";
 
-    res.clearCookie("refreshToken", {
-      path: "/",
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+res.clearCookie("accessToken", accessToken, {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "None" : "Lax",   // no trailing space
+  path: "/",
+  maxAge: 15 * 60 * 1000,
+});
+
+res.clearCookie("refreshToken", refreshToken, {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "None" : "Lax",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+});
+
 
     return res.status(200).json({ message: "Successfully signed out" });
   } catch (error) {

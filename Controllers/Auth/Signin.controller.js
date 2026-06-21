@@ -75,22 +75,26 @@ if (!user.isVerified) {
       location: location,
     });
     await user.save();
-const isProduction = process.env.NODE_ENV === "production";
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: isProduction,
-      // sameSite: isProduction ? "None " : "Lax", 
-      path: "/",
-      maxAge: 15 * 60 * 1000, 
-    });
 
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: isProduction,
-      // sameSite: isProduction ? "None " : "Lax", 
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, 
-    });
+
+const isProduction = process.env.NODE_ENV === "production";
+
+res.cookie("accessToken", accessToken, {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "None" : "Lax",   // no trailing space
+  path: "/",
+  maxAge: 15 * 60 * 1000,
+});
+
+res.cookie("refreshToken", refreshToken, {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "None" : "Lax",
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+});
+
 
     return res.status(200).json("Signin successful");
   } catch (error) {
