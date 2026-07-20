@@ -1,0 +1,42 @@
+/* Container.css */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.container-nav {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 0.5rem;
+}
+
+.container-nav button {
+  background: none;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+  transition: all 0.2s ease;
+}
+
+.container-nav button:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.container-nav button.active {
+  color: #2563eb;
+  background: #eff6ff;
+  border-bottom: 3px solid #2563eb;
+}
+
+.container-content {
+  min-height: 500px; /* ensure stable layout */
+}
