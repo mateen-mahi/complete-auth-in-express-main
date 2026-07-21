@@ -16,6 +16,7 @@ import cookieParser from 'cookie-parser';
 import environment from 'dotenv';
 import cors from 'cors';
 import verifyAuth from './Middlewares/AuthMiddleware.js';
+import certificateRouter from './routes/certificate.route.js';
 
 environment.config(); 
 
@@ -56,6 +57,7 @@ app.use("/api/v1/progress", verifyAuth, progressRouter);
 app.use("/api/v1/messages",verifyAuth, messageRouter)
 app.use("/api/v1/admin",verifyAuth,adminRoutes);
 app.use("/api/v1/books", verifyAuth,booksRouter)
+app.use("/api/v1/certificates",verifyAuth,certificateRouter)
 
 const PORT = process.env.PORT || 8080;
 
