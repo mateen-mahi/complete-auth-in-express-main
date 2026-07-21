@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 import userModel from "../../models/user.model.js";
 
 const SignoutController = async (req, res) => {
@@ -7,21 +8,24 @@ const SignoutController = async (req, res) => {
 
     if (refreshToken) {
       try {
+
         const decoded = jwt.verify(
           refreshToken,
-          process.env.JWT_SECRET_REFRESH_TOKEN
+          process.env.JWT_SECRET_REFRESH_TOKEN,
+          { ignoreExpiration: true }
         );
 
-        await userModel.updateOne(
-          { _id: decoded.id },
-          { $unset: { refreshToken: 1, refreshTokenExpiry: 1 } }
-        );
+        const user = await userModel.findById(decoded.id);
+        if (user && user.refreshToken) {
+          const matches = await bcrypt.compare(refreshToken, user.refreshToken);
+          if (matches) {
+            user.refreshToken = undefined;
+            user.refreshTokenExpiry = undefined;
+            await user.save();
+          }
+        }
       } catch (tokenErr) {
-        // Token invalid/expired — still try to clear from DB by token value
-        await userModel.updateOne(
-          { refreshToken },
-          { $unset: { refreshToken: 1, refreshTokenExpiry: 1 } }
-        );
+        console.error("Signout token verify failed:", tokenErr.message);
       }
     }
 

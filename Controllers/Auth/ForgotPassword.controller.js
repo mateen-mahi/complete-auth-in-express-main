@@ -3,29 +3,53 @@ import userModel from "../../models/user.model.js";
 import { forgotPasswordMailSender } from "../../utils/mailSender.js";
 
 const forgotPasswordController = async (req, res) => {
-  const forgotPasswordToken = crypto.randomBytes(32).toString("hex");
-  const forgotPasswordTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  const { email } = req.body;
-
-  const user = await userModel.findOne({ email });
   try {
-    if (!user) {
-      return res.status(404).json("this account is not available");
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required.",
+      });
     }
 
-    user.forgotPasswordToken = forgotPasswordToken;
-    user.forgotPasswordTokenExpiry = forgotPasswordTokenExpiry;
+    const user = await userModel.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "This account does not exist.",
+      });
+    }
+
+    const forgotPasswordToken = crypto.randomBytes(32).toString("hex");
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(forgotPasswordToken)
+      .digest("hex");
+
+    user.forgotPasswordToken = hashedToken;
+    user.forgotPasswordTokenExpiry = new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    );
 
     await user.save();
+
     forgotPasswordMailSender(forgotPasswordToken, email);
 
-    res.status(200).json("Reset Password Link sent to your email");
+    return res.status(200).json({
+      success: true,
+      message: "Reset password link has been sent to your email.",
+    });
   } catch (error) {
-    console.log("Error in forgot password api ", error);
+    console.error("Error in ForgotPasswordController:", error);
 
-    res.status(404).json("Invalid email address");
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
   }
-}; 
-
+};
 
 export default forgotPasswordController;

@@ -3,6 +3,10 @@ import jwt from "jsonwebtoken";
 import userModel from "../../models/user.model.js";
 import { verifyMailSender } from "../../utils/mailSender.js";
 
+const EMAIL_MAX_LENGTH = 254; 
+const PASSWORD_MAX_LENGTH = 72; 
+const PASSWORD_MIN_LENGTH = 8;
+
 const SignupController = async (req, res) => {
   try {
     const { username, email, password, gender } = req.body;
@@ -11,10 +15,45 @@ const SignupController = async (req, res) => {
       return res.status(400).json("Please fill out all fields");
     }
 
-      const existingUser = await userModel.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json("An account with this email already exists");
-    }
+
+ if (
+  email.length > EMAIL_MAX_LENGTH ||
+  password.length > PASSWORD_MAX_LENGTH ||
+  password.length < PASSWORD_MIN_LENGTH
+) {
+  return email.length > EMAIL_MAX_LENGTH
+    ? res.status(400).json({
+        success: false,
+        message: `Email cannot exceed ${EMAIL_MAX_LENGTH} characters.`,
+      })
+    : password.length > PASSWORD_MAX_LENGTH
+    ? res.status(400).json({
+        success: false,
+        message: `Password cannot exceed ${PASSWORD_MAX_LENGTH} characters.`,
+      })
+    : res.status(400).json({
+        success: false,
+        message: `Password must be at least ${PASSWORD_MIN_LENGTH} characters long.`,
+      });
+}
+
+const existingUser = await userModel.findOne({ email });
+
+if (existingUser) {
+  if (!existingUser.isVerified) {
+    return res.status(409).json({
+      success: false,
+      code: "EMAIL_NOT_VERIFIED",
+      message: "This email is registered but not verified.",
+    });
+  }
+
+  return res.status(409).json({
+    success: false,
+    code: "EMAIL_ALREADY_EXISTS",
+    message: "An account with this email already exists.",
+  });
+}
 
     const hashPassword = await bcrypt.hash(password, 10);
 

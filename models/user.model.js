@@ -40,14 +40,19 @@ const userSchema = new mongoose.Schema({
     enum: ["student", "instructor", "admin","super-admin", "user"], 
     default: "user",
   },
-  loginHistory: [
-    {
-      loginTime: Date,
-      ipAddress: String,
-      location: String,
-    },
-    
-  ],
+loginHistory: [{
+  loginTime: Date,
+  ipAddress: String,
+  location: String,
+  device: {
+    browser: String,
+    os: String,
+    deviceType: String,
+    deviceModel: String,
+    deviceVendor: String,
+    raw: String,
+  },
+}],
   coursesProgress: [
     {
       courseId: { type: mongoose.Schema.Types.ObjectId, ref: "Course" },

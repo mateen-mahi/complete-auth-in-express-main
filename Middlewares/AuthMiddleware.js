@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
-import userModel from "../models/user.model.js"; 
+import bcrypt from "bcryptjs";
+import userModel from "../models/user.model.js";
 
 const verifyAuth = async (req, res, next) => {
   try {
@@ -18,7 +19,7 @@ const verifyAuth = async (req, res, next) => {
       } catch (err) {
         if (err.name !== "TokenExpiredError") {
           return res.status(401).json({ message: "Invalid access token" });
-        }
+        };
       }
     }
 
@@ -33,18 +34,20 @@ const verifyAuth = async (req, res, next) => {
       return res.status(401).json({ message: "Invalid or expired refresh token" });
     }
 
-    const user = await userModel.findById(decodedRefresh.id); 
-    
-    if (!user) {
+    const user = await userModel.findById(decodedRefresh.id);
+
+    if (!user || !user.refreshToken) {
       return res.status(401).json({ message: "User not found" });
     }
 
-    if (user.refreshToken !== refreshToken) {
+    // refreshToken in DB is a bcrypt hash — compare, don't equality-check
+    const isMatch = await bcrypt.compare(refreshToken, user.refreshToken);
+    if (!isMatch) {
       return res.status(401).json({ message: "Refresh token mismatch — please log in again" });
     }
 
     const newAccessToken = jwt.sign(
-      { id: user._id, email: user.email },
+      { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET_ACCESS_TOKEN,
       { expiresIn: "15m" }
     );
@@ -55,29 +58,31 @@ const verifyAuth = async (req, res, next) => {
       { expiresIn: "7d" }
     );
 
-    user.refreshToken = newRefreshToken;
+    // Hash before storing — never persist a raw refresh token
+    user.refreshToken = await bcrypt.hash(newRefreshToken, 10);
     await user.save();
 
     const isProduction = process.env.NODE_ENV === "production";
 
-    res.cookie("accessToken", newAccessToken, {
+    const cookieOptions = {
       httpOnly: true,
       secure: isProduction,
-    //   sameSite: isProduction ? "None " : "Lax",
+      sameSite: isProduction ? "None" : "Lax",
       path: "/",
-      maxAge: 15 * 60 * 1000, 
+    };
+
+    res.cookie("accessToken", newAccessToken, {
+      ...cookieOptions,
+      maxAge: 15 * 60 * 1000,
     });
 
     res.cookie("refreshToken", newRefreshToken, {
-      httpOnly: true,
-      secure: isProduction,
-      // sameSite: isProduction ? "None " : "Lax", 
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, 
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    req.user = { id: user._id, email: user.email };
-    return next(); 
+    req.user = { id: user._id, email: user.email, role: user.role };
+    return next();
   } catch (err) {
     console.error("Auth middleware error:", err);
     return res.status(500).json({ message: "Internal server error" });
@@ -85,22 +90,3 @@ const verifyAuth = async (req, res, next) => {
 };
 
 export default verifyAuth;
-
-
-// const userAuthentication = (req,res,next)=>{
-//   const token = req.cookies.JWTToken;
-//   if(!token){
-//     return res.redirect('/users/login');
-//   }else{
-//     jwt.verify(token, process.env.JWT_SECRET_ACCESS_TOKEN, (err, decodedToken) => {
-//       if(err){
-//         res.clearCookie('JWTToken');
-//         return res.redirect('/users/login');
-//       }
-//       // res.redirect("/");
-//       req.user = decodedToken;
-//       next();
-//     });
-//   }
-
-// }

@@ -25,4 +25,4 @@ const CheckAuthController = async (req, res) => {
   }
 };
 
-export default CheckAuthController;
+export default CheckAuthController; 

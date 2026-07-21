@@ -1,5 +1,8 @@
 import Book from "../../models/books.model.js";
-import { uploadDocument } from "../../utils/pdfSendToCloudinary.js";
+import mongoose from "mongoose";
+import { uploadDocument, deleteDocument } from "../../utils/pdfSendToCloudinary.js";
+
+const MAX_LIMIT = 50; 
 
 const handleControllerError = (res, error) => {
   console.error(error);
@@ -17,6 +20,20 @@ const handleControllerError = (res, error) => {
     .json({ success: false, message: "Internal server error." });
 };
 
+// Escape regex special characters so user search input can never be
+// interpreted as a regex pattern (prevents ReDoS and unintended matches).
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Normalize + cap pagination params so a client can't request
+// an unbounded result set.
+const getPagination = (query) => {
+  const page = Math.max(parseInt(query.page) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(query.limit) || 10, 1), MAX_LIMIT);
+  return { page, limit, skip: (page - 1) * limit };
+};
+
+const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+
 // ─── ADD NEW BOOK ───────────────────────────────────────────
 export const addNewBook = async (req, res) => {
   try {
@@ -26,6 +43,13 @@ export const addNewBook = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Title and description are required.",
+      });
+    }
+
+    if (courseId && !isValidObjectId(courseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid courseId format.",
       });
     }
 
@@ -66,16 +90,22 @@ export const addNewBook = async (req, res) => {
 // ─── GET ALL BOOKS ──────────────────────────────────────────
 export const getAllBooks = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const { page, limit, skip } = getPagination(req.query);
     const courseId = req.query.courseId;
+
+    if (courseId && !isValidObjectId(courseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid courseId format.",
+      });
+    }
 
     const filter = courseId ? { courseId } : {};
 
     const [books, total] = await Promise.all([
       Book.find(filter)
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
+        .skip(skip)
         .limit(limit)
         .populate("courseId", "title")
         .lean(),
@@ -98,6 +128,10 @@ export const getAllBooks = async (req, res) => {
 export const getBookById = async (req, res) => {
   try {
     const { bookId } = req.params;
+
+    if (!isValidObjectId(bookId)) {
+      return res.status(400).json({ success: false, message: "Invalid ID format" });
+    }
 
     const book = await Book.findById(bookId)
       .populate("courseId", "title description")
@@ -123,13 +157,17 @@ export const getBookById = async (req, res) => {
 export const getBooksByCourseId = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+
+    if (!isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: "Invalid courseId format" });
+    }
+
+    const { page, limit, skip } = getPagination(req.query);
 
     const [books, total] = await Promise.all([
       Book.find({ courseId })
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
+        .skip(skip)
         .limit(limit)
         .lean(),
       Book.countDocuments({ courseId }),
@@ -151,7 +189,19 @@ export const getBooksByCourseId = async (req, res) => {
 export const updateBook = async (req, res) => {
   try {
     const { bookId } = req.params;
+
+    if (!isValidObjectId(bookId)) {
+      return res.status(400).json({ success: false, message: "Invalid ID format" });
+    }
+
     const { title, description, courseId } = req.body;
+
+    if (courseId !== undefined && courseId !== null && !isValidObjectId(courseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid courseId format.",
+      });
+    }
 
     const updateFields = {};
     if (title !== undefined) updateFields.title = title.trim();
@@ -187,82 +237,15 @@ export const updateBook = async (req, res) => {
   }
 };
 
-// ─── UPDATE TITLE ONLY ─────────────────────────────────────
-export const updateBookTitle = async (req, res) => {
-  try {
-    const { bookId } = req.params;
-    const { title } = req.body;
-
-    if (!title || title.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Title is required.",
-      });
-    }
-
-    const updatedBook = await Book.findByIdAndUpdate(
-      bookId,
-      { title: title.trim() },
-      { new: true, runValidators: true }
-    ).populate("courseId", "title description");
-
-    if (!updatedBook) {
-      return res.status(404).json({
-        success: false,
-        message: "Book not found.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Book title updated successfully.",
-      data: updatedBook,
-    });
-  } catch (error) {
-    return handleControllerError(res, error);
-  }
-};
-
-// ─── UPDATE DESCRIPTION ONLY ──────────────────────────────
-export const updateBookDescription = async (req, res) => {
-  try {
-    const { bookId } = req.params;
-    const { description } = req.body;
-
-    if (!description || description.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required.",
-      });
-    }
-
-    const updatedBook = await Book.findByIdAndUpdate(
-      bookId,
-      { description: description.trim() },
-      { new: true, runValidators: true }
-    ).populate("courseId", "title description");
-
-    if (!updatedBook) {
-      return res.status(404).json({
-        success: false,
-        message: "Book not found.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Book description updated successfully.",
-      data: updatedBook,
-    });
-  } catch (error) {
-    return handleControllerError(res, error);
-  }
-};
 
 // ─── DELETE BOOK ────────────────────────────────────────────
 export const deleteBook = async (req, res) => {
   try {
     const { bookId } = req.params;
+
+    if (!isValidObjectId(bookId)) {
+      return res.status(400).json({ success: false, message: "Invalid ID format" });
+    }
 
     const book = await Book.findById(bookId);
 
@@ -273,14 +256,13 @@ export const deleteBook = async (req, res) => {
       });
     }
 
-    // Optional: Delete document from Cloudinary if needed
     if (book.document?.publicId) {
       try {
-        // Uncomment if you want to delete from Cloudinary
-        // await deleteDocument(book.document.publicId);
+        // Fixed: deleteDocument was never imported before — this used to
+        // throw silently and leave orphaned files in Cloudinary.
+        await deleteDocument(book.document.publicId);
       } catch (cloudinaryError) {
         console.error("Error deleting from Cloudinary:", cloudinaryError);
-        // Continue with database deletion even if Cloudinary deletion fails
       }
     }
 
@@ -299,8 +281,7 @@ export const deleteBook = async (req, res) => {
 export const searchBooks = async (req, res) => {
   try {
     const { q } = req.query;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const { page, limit, skip } = getPagination(req.query);
 
     if (!q || q.trim().length === 0) {
       return res.status(400).json({
@@ -309,17 +290,19 @@ export const searchBooks = async (req, res) => {
       });
     }
 
+    const safeQuery = escapeRegex(q.trim());
+
     const searchQuery = {
       $or: [
-        { title: { $regex: q, $options: "i" } },
-        { description: { $regex: q, $options: "i" } },
+        { title: { $regex: safeQuery, $options: "i" } },
+        { description: { $regex: safeQuery, $options: "i" } },
       ],
     };
 
     const [books, total] = await Promise.all([
       Book.find(searchQuery)
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
+        .skip(skip)
         .limit(limit)
         .populate("courseId", "title")
         .lean(),
@@ -360,5 +343,3 @@ export const getBookCount = async (req, res) => {
     return handleControllerError(res, error);
   }
 };
-
-
