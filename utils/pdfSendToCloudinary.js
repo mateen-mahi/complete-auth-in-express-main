@@ -25,3 +25,18 @@ export function uploadDocument(buffer, options = {}) {
     stream.end(buffer);
   });
 }
+
+export function deleteDocument(publicId, options = {}) {
+  const { resourceType = "raw" } = options;
+
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.destroy(
+      publicId,
+      { resource_type: resourceType },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+  });
+}

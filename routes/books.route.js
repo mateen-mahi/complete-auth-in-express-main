@@ -12,27 +12,27 @@ import {
   getBookCount,
 } from "../Controllers/books/books.controller.js";
 
-const router = express.Router();
+const booksRouter = express.Router();
 
 
 
 // ─── READ ROUTES ─────────────────────────────────────────
-router.get("/",  getAllBooks);
-router.get("/search", searchBooks);
-router.get("/count", requireRole("admin"), getBookCount);
-router.get("/course/:courseId", getBooksByCourseId);
-router.get("/:bookId", getBookById);
+booksRouter.get("/",  getAllBooks);
+booksRouter.get("/search", searchBooks);
+booksRouter.get("/count",  getBookCount);
+booksRouter.get("/course/:courseId", getBooksByCourseId);
+booksRouter.get("/:bookId", getBookById);
 
-router.post(
+booksRouter.post(
   "/",
-  upload.single("document"),
+  uploadDocument.single("document"),
   addNewBook
 );
 
-router.put("/:bookId",  updateBook);
-router.delete("/:bookId", deleteBook);
+booksRouter.put("/:bookId",  updateBook);
+booksRouter.delete("/:bookId", deleteBook);
 
-export default router;
+export default booksRouter;
 
 
 // ============================================================
