@@ -3,7 +3,6 @@
 // ============================================================
 
 import express from "express";
-import {uploadDocument} from "../Middlewares/Multer.configPDF.js";
 
 import {
   issueCertificate,
@@ -50,13 +49,7 @@ certificateRouter.get("/:certificateId",  getCertificateById);
 // Content-Type: multipart/form-data
 // Body: studentId (REQUIRED), courseId (REQUIRED), instructorId (optional), grade (optional)
 // File: field name must match your multer config (e.g. "certificate")
-certificateRouter.post(
-  "/",
-  
-  
-  uploadDocument.single("certificate"),
-  issueCertificate
-);
+certificateRouter.post("/",  issueCertificate);
 
 // PATCH /api/v1/certificates/:certificateId/revoke
 // Auth: required, role: admin or instructor
