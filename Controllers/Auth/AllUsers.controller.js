@@ -219,32 +219,68 @@ export const updateUserPassword = async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 export const addNewUser = async (req, res) => {
   try {
-    const { username, email, password, gender, isVerified } = req.body;
+    // Accept either a single user object or an array of user objects
+    const isBulk = Array.isArray(req.body);
+    const users = isBulk ? req.body : [req.body];
 
-    if (!username || !email || !password || !gender || typeof isVerified !== "boolean") {
-      return res.status(400).json({ success: false, message: "Username, email, password, gender, and verification status are required" });
+    if (users.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one user is required" });
     }
 
-    const existingUser = await userModel.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: "This email is already registered." });
+    // Validate every entry before touching the DB
+    for (let i = 0; i < users.length; i++) {
+      const { username, email, password, gender, isVerified } = users[i];
+      if (!username || !email || !password || !gender || typeof isVerified !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          message: `Entry ${i + 1}: username, email, password, gender, and verification status are required`,
+        });
+      }
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Catch duplicate emails within the same request payload itself
+    const emailsInPayload = users.map((u) => u.email.toLowerCase());
+    const duplicatesInPayload = emailsInPayload.filter(
+      (email, idx) => emailsInPayload.indexOf(email) !== idx
+    );
+    if (duplicatesInPayload.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Duplicate email(s) in request: ${[...new Set(duplicatesInPayload)].join(", ")}`,
+      });
+    }
 
-    const newUser = new userModel({
-      username,
-      email,
-      password: hashedPassword,
-      gender,
-      isVerified
+    // Catch emails that already exist in the DB
+    const existingUsers = await userModel.find({ email: { $in: emailsInPayload } }).select("email");
+    if (existingUsers.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Already registered: ${existingUsers.map((u) => u.email).join(", ")}`,
+      });
+    }
+
+    // Hash all passwords in parallel
+    const usersToInsert = await Promise.all(
+      users.map(async (u) => ({
+        username: u.username,
+        email: u.email,
+        password: await bcrypt.hash(u.password, 10),
+        gender: u.gender,
+        isVerified: u.isVerified,
+      }))
+    );
+
+    const savedUsers = await userModel.insertMany(usersToInsert);
+
+    // Notify for each created user
+    savedUsers.forEach((savedUser) => notifyUserRegistered(savedUser));
+
+    return res.status(201).json({
+      success: true,
+      message: isBulk
+        ? `${savedUsers.length} user(s) created successfully`
+        : "New user created successfully",
     });
-
-    const savedUser = await newUser.save(); // NEW — was `await newUser.save();`, captured so it can be passed to the notifier below
-
-    notifyUserRegistered(savedUser); // NEW — pushes to the admin dashboard live
-
-    return res.status(201).json({ success: true, message: "New user created successfully" });
   } catch (error) {
     console.log("Error in add new user api: ", error);
     return res.status(500).json({ success: false, message: "Server error during new user creation" });

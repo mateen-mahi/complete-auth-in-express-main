@@ -140,35 +140,52 @@ export const getFeaturedCourses = async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 export const createCourse = async (req, res) => {
   try {
-    const { title, description, instructor, category, price, duration, level, color, emoji, featured } = req.body;
+    // Accept either a single course object or an array of course objects
+    const isBulk = Array.isArray(req.body);
+    const courses = isBulk ? req.body : [req.body];
 
-    if (
-      !title || !description || !instructor || !category ||
-      price === undefined || duration === undefined || !level || !color || !emoji
-    ) {
-      return res.status(400).json({ success: false, message: "All required fields must be provided" });
+    if (courses.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one course is required" });
     }
 
+    // Validate every entry before touching the DB
+    for (let i = 0; i < courses.length; i++) {
+      const { title, description, instructor, category, price, duration, level, color, emoji } = courses[i];
+      if (
+        !title || !description || !instructor || !category ||
+        price === undefined || duration === undefined || !level || !color || !emoji
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: `Entry ${i + 1}: all required fields must be provided`,
+        });
+      }
+    }
 
+    const coursesToInsert = courses.map((c) => ({
+      title: c.title,
+      description: c.description,
+      instructor: c.instructor,
+      category: c.category,
+      price: c.price,
+      duration: c.duration,
+      level: c.level,
+      color: c.color,
+      emoji: c.emoji,
+      featured: typeof c.featured === "boolean" ? c.featured : false,
+    }));
 
-    const newCourse = new Course({
-      title,
-      description,
-      instructor,
-      category,
-      price,
-      duration,
-      level,
-      color,
-      emoji,
-      featured: typeof featured === "boolean" ? featured : false,
+    const savedCourses = await Course.insertMany(coursesToInsert);
+
+    savedCourses.forEach((savedCourse) => notifyCourseCreated(savedCourse));
+
+    return res.status(201).json({
+      success: true,
+      message: isBulk
+        ? `${savedCourses.length} course(s) created successfully`
+        : "Course created successfully",
+      data: isBulk ? savedCourses : savedCourses[0],
     });
-
-    await newCourse.save();
-
-    notifyCourseCreated(newCourse); // NEW — pushes to the admin dashboard live
-
-    res.status(201).json({ success: true, data: newCourse });
   } catch (error) {
     return handleControllerError(res, error);
   }

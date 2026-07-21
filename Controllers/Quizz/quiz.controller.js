@@ -98,24 +98,76 @@ export const getQuizForAttempt = async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 export const createQuiz = async (req, res) => {
   try {
-    const { title, subject, totalTime, courseId, questions } = req.body;
+    const bulk = Array.isArray(req.body);
+    const quizzesInput = bulk ? req.body : [req.body];
 
-    if (!title || !subject || !totalTime || !courseId || !Array.isArray(questions) || questions.length === 0) {
-      return res.status(400).json({
+    if (quizzesInput.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one quiz is required" });
+    }
+
+    for (let i = 0; i < quizzesInput.length; i++) {
+      const { title, subject, totalTime, courseId, questions } = quizzesInput[i];
+      if (!title || !subject || !totalTime || !courseId || !Array.isArray(questions) || questions.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Entry ${i + 1}: title, subject, totalTime, courseId, and at least one question are required`,
+        });
+      }
+      if (!mongoose.Types.ObjectId.isValid(courseId)) {
+        return res.status(400).json({
+          success: false,
+          message: `Entry ${i + 1}: invalid courseId format`,
+        });
+      }
+    }
+
+    const courseIds = [...new Set(quizzesInput.map((q) => q.courseId))];
+    const existingCourses = await Course.find({ _id: { $in: courseIds } }).select("_id");
+
+    if (existingCourses.length !== courseIds.length) {
+      const foundIds = new Set(existingCourses.map((c) => c._id.toString()));
+      const missingIds = courseIds.filter((id) => !foundIds.has(id));
+      return res.status(404).json({
         success: false,
-        message: "Title, subject, totalTime, courseId, and at least one question are required",
+        message: `Course(s) not found: ${missingIds.join(", ")}`,
       });
     }
 
-    const newQuiz = new Quiz({ title, subject, totalTime, courseId, questions });
-    await newQuiz.save();
-
-    await Course.findByIdAndUpdate(
-      courseId,
-      { $push: { quizzes: newQuiz._id } }
+    const quizDocs = quizzesInput.map(
+      (q) =>
+        new Quiz({
+          title: q.title,
+          subject: q.subject,
+          totalTime: q.totalTime,
+          courseId: q.courseId,
+          questions: q.questions,
+        })
     );
 
-    res.status(201).json({ success: true, data: newQuiz });
+    const savedQuizzes = await Promise.all(quizDocs.map((doc) => doc.save()));
+
+    const quizIdsByCourse = {};
+    savedQuizzes.forEach((quiz) => {
+      const courseId = quiz.courseId.toString();
+      if (!quizIdsByCourse[courseId]) quizIdsByCourse[courseId] = [];
+      quizIdsByCourse[courseId].push(quiz._id);
+    });
+
+    await Promise.all(
+      Object.entries(quizIdsByCourse).map(([courseId, quizIds]) =>
+        Course.findByIdAndUpdate(courseId, {
+          $push: { quizzes: { $each: quizIds } },
+        })
+      )
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: bulk
+        ? `${savedQuizzes.length} quiz(zes) created successfully`
+        : "Quiz created successfully",
+      data: bulk ? savedQuizzes : savedQuizzes[0],
+    });
   } catch (error) {
     return handleControllerError(res, error);
   }

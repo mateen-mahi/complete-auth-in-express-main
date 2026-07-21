@@ -15,8 +15,6 @@ const certificateSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    // Reference only — instructor's name/details are populated via ref,
-    // never duplicated as plain text on this document.
     instructorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -32,7 +30,7 @@ const certificateSchema = new mongoose.Schema(
       publicId: { type: String, required: true },
     },
     grade: {
-      type: String, // e.g. "A", "Distinction" — optional, adjust/remove if unused
+      type: String,
       default: null,
     },
     status: {
