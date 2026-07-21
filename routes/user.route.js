@@ -1,28 +1,16 @@
 import express from "express";
 import verifyAuth from "../Middlewares/AuthMiddleware.js";
-import upload from "../Middlewares/multer.middleware.js"; // was missing — caused a crash on "upload.single"
+import upload from "../Middlewares/multer.middleware.js";
+
 import SignupController from "../Controllers/Auth/Signup.controller.js";
 import SigninController from "../Controllers/Auth/Signin.controller.js";
 import SignoutController from "../Controllers/Auth/Signout.controller.js";
 import ForgotPasswordController from "../Controllers/Auth/ForgotPassword.controller.js";
 import ResetPasswordController from "../Controllers/Auth/ResetPassword.controller.js";
 import CheckAuthController from "../Controllers/Auth/CheckAuth.controller.js";
-<<<<<<< Updated upstream
-import  verifyUser  from "../Controllers/Auth/VerifyUser.controller.js";
-import { 
-  getAllUsers, 
-  getSingleUser, 
-  editUser,  
-  deleteUser, 
-  deleteAllUsers 
-} from "../Controllers/Auth/AllUsers.controller.js"; 
+// import OtpSenderController from "../Controllers/Auth/SendingOTP.controller.js";
+// import VerifyUserController from "../Controllers/Auth/VerifyUser.controller.js";
 
-
-
-
-=======
-import OtpSenderController from "../Controllers/Auth/SendingOTP.controller.js";
-import VerifyUserController from "../Controllers/Auth/verifyUser.controller.js";
 import {
   getAllUsers,
   getSingleUser,
@@ -30,40 +18,45 @@ import {
   deleteUser,
   deleteAllUsers,
   updateUserPassword,
-  addNewUser
+  addNewUser,
 } from "../Controllers/Auth/AllUsers.controller.js";
->>>>>>> Stashed changes
 
 const userRoutes = express.Router();
+
+// =========================
+// Authentication Routes
+// =========================
 
 userRoutes.post("/signup", SignupController);
 userRoutes.post("/signin", SigninController);
 userRoutes.post("/signout", SignoutController);
+
 userRoutes.post("/forgot-password", ForgotPasswordController);
 userRoutes.post("/reset-password", ResetPasswordController);
-<<<<<<< Updated upstream
-userRoutes.get("/check-auth",verifyAuth, CheckAuthController);
-userRoutes.post("/verify-user",verifyUser);
 
-
-// userRoutes.get("/all-users", verifyAuth, getAllUsers);
-// userRoutes.get("/single-user/:id", verifyAuth, getSingleUser);
-// userRoutes.put("/edit-user/:id", verifyAuth, editUser);
-// userRoutes.patch("/update-role/:id", verifyAuth, updateUserRole);
-// userRoutes.delete("/delete-user/:id", verifyAuth, deleteUser);
-// userRoutes.delete("/clear-all-users", verifyAuth, deleteAllUsers);
-
-=======
 userRoutes.get("/check-auth", verifyAuth, CheckAuthController);
-userRoutes.post("/send-verify-otp", OtpSenderController);
-userRoutes.post("/verify-user", VerifyUserController);
+
+// userRoutes.post("/send-verify-otp", OtpSenderController);
+// userRoutes.post("/verify-user", VerifyUserController);
+
+// =========================
+// User Management Routes
+// =========================
+
 userRoutes.post("/add-user", verifyAuth, addNewUser);
->>>>>>> Stashed changes
 
 userRoutes.get("/all-users", verifyAuth, getAllUsers);
 userRoutes.get("/single-user/:id", verifyAuth, getSingleUser);
+
 userRoutes.put("/update-password/:id", verifyAuth, updateUserPassword);
-userRoutes.put("/edit-user/:id", verifyAuth, upload.single("avatar"), editUser);
+
+userRoutes.put(
+  "/edit-user/:id",
+  verifyAuth,
+  upload.single("avatar"),
+  editUser
+);
+
 userRoutes.delete("/delete-user/:id", verifyAuth, deleteUser);
 userRoutes.delete("/clear-all-users", verifyAuth, deleteAllUsers);
 

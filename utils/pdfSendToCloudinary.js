@@ -1,4 +1,4 @@
-import cloudinary from "../config/cloudinary";
+import cloudinary from "../config/cloudinary.js";
 
 export function uploadDocument(buffer, options = {}) {
   const { folder = "LMS Documents" } = options;

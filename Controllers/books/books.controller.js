@@ -1,5 +1,5 @@
 import Book from "../../models/books.model.js";
-import { uploadDocument } from "../../utils/uploadDocument.js";
+import { uploadDocument } from "../../utils/pdfSendToCloudinary.js";
 
 const handleControllerError = (res, error) => {
   console.error(error);
