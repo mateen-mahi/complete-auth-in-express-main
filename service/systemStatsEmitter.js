@@ -74,7 +74,7 @@ async function collectAndEmit() {
 export const startSystemStatsEmitter = (intervalMs = 4000) => {
   if (interval) return; // already running
   interval = setInterval(collectAndEmit, intervalMs);
-  collectAndEmit(); // fire once immediately instead of waiting for the first tick
+  collectAndEmit(); 
 };
 
 export const stopSystemStatsEmitter = () => {

@@ -282,3 +282,28 @@ export const getQuizzesByCourseId = async (req, res) => {
     return handleControllerError(res, error);
   }
 };
+
+// ─────────────────────────────────────────────────────────────
+// 9. DELETE all quizzes and remove references from all courses
+// ─────────────────────────────────────────────────────────────
+export const deleteAllQuizzes = async (req, res) => {
+  try {
+    const result = await Quiz.deleteMany({});
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No quizzes found to delete",
+      });
+    }
+
+    await Course.updateMany({}, { $set: { quizzes: [] } });
+
+    res.status(200).json({
+      success: true,
+      message: `Removed ${result.deletedCount} quiz(zes) and cleared quiz references from all courses.`,
+    });
+  } catch (error) {
+    return handleControllerError(res, error);
+  }
+};

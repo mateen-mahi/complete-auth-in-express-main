@@ -7,7 +7,8 @@ import {
     createQuiz,
     updateQuiz,
     deleteQuiz,
-    deleteQuizzesByCourseId
+    deleteQuizzesByCourseId,
+    deleteAllQuizzes
 } from "../Controllers/Quizz/quiz.controller.js";
 
 const quizRoute = express.Router();
@@ -20,5 +21,6 @@ quizRoute.post("/",  createQuiz);
 quizRoute.put("/:quizId",  updateQuiz);
 quizRoute.delete("/:quizId",  deleteQuiz);
 quizRoute.delete("/course/:courseId",deleteQuizzesByCourseId);
+quizRoute.delete("/", deleteAllQuizzes)
 
 export default quizRoute;
