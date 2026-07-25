@@ -45,3 +45,7 @@ export const notifyLoginSuccess = ({ userId, username }) =>
 
 export const notifyLoginFailed = ({ email }) =>
   emitAdminEvent("login:failed", { email, at: new Date().toISOString() });
+
+
+export const notifySystemStats = (stats) =>
+  emitAdminEvent("system:stats", stats);

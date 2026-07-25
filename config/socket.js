@@ -1,5 +1,6 @@
 import { Server } from "socket.io";
 import { registerSocketHandlers } from "../sockets/handler.js";
+import { startSystemStatsEmitter, stopSystemStatsEmitter } from "../service/systemStatsEmitter.js";
 import User from "../models/user.model.js";
 
 let io;
@@ -52,14 +53,18 @@ export const initSocket = (server, allowedOrigins) => {
     // distinct from the main app's online-user count.
     const adminCount = adminNamespace.sockets.size;
     adminNamespace.emit("admin:presence", { onlineAdmins: adminCount });
-
+  if (adminCount === 1) startSystemStatsEmitter();   
     socket.on("disconnect", () => {
       console.log(`🛡️  Admin disconnected: ${socket.username}`);
       // -1 because this socket is already removed from .sockets by the time
       // this fires, so .size is already correct — no manual subtraction needed
-      adminNamespace.emit("admin:presence", { onlineAdmins: adminNamespace.sockets.size });
+      const remaining = adminNamespace.sockets.size;
+      adminNamespace.emit("admin:presence", { onlineAdmins: remaining });
+       if (remaining === 0) stopSystemStatsEmitter(); 
     });
   });
+
+
 
   io.on("connection", (socket) => {
     console.log(`✅ Socket connected: ${socket.id} (User: ${socket.userId})`);
