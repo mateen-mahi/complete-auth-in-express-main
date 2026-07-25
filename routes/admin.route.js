@@ -5,6 +5,6 @@ import {getSystemStats} from "../Controllers/Systeminfo/Systemstats.controller.j
 const adminRoutes = express.Router();
 
 adminRoutes.get("/dashboard-stats", getDashboardStats);
-adminRoutes.get("/admin/system-stats", getSystemStats);
+adminRoutes.get("/system-stats", getSystemStats);
 
 export default adminRoutes;
