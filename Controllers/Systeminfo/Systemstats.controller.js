@@ -1,9 +1,10 @@
 import si from "systeminformation";
-import { notifySystemStats } from "./adminEvents.js";
 
-let interval = null;
-
-async function collectAndEmit() {
+// GET /admin/system-stats
+// Returns the same shape systemStatsEmitter.js broadcasts over the socket —
+// this REST endpoint is only for the initial page-load fetch (before the
+// first "system:stats" socket tick arrives).
+export const getSystemStats = async (req, res) => {
   try {
     const [cpu, currentLoad, mem, fsSize, networkStats, time] = await Promise.all([
       si.cpu(),
@@ -17,7 +18,7 @@ async function collectAndEmit() {
     const totalDiskUsed = fsSize.reduce((s, d) => s + d.used, 0);
     const totalDiskSize = fsSize.reduce((s, d) => s + d.size, 0);
 
-    notifySystemStats({
+    const stats = {
       cpu: {
         usagePercent: currentLoad.currentLoad,
         cores: cpu.cores,
@@ -65,19 +66,11 @@ async function collectAndEmit() {
       },
       uptimeSeconds: time.uptime,
       os: { platform: process.platform, arch: process.arch, hostname: cpu.socket || undefined },
-    });
-  } catch (err) {
-    console.error("[SystemStats] Failed to collect/emit:", err.message);
+    };
+
+    return res.status(200).json({ success: true, stats });
+  } catch (error) {
+    console.log("Error in get system stats api: ", error);
+    return res.status(500).json({ success: false, message: "Server error while fetching system stats" });
   }
-}
-
-export const startSystemStatsEmitter = (intervalMs = 4000) => {
-  if (interval) return; 
-  interval = setInterval(collectAndEmit, intervalMs);
-  collectAndEmit(); 
-};
-
-export const stopSystemStatsEmitter = () => {
-  clearInterval(interval);
-  interval = null;
 };
