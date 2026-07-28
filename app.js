@@ -29,7 +29,7 @@ const allowedOrigins = [
 const app = express();
 const server = http.createServer(app);
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
@@ -42,7 +42,7 @@ app.use(cors({
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
 app.set("trust proxy", 1);
 
