@@ -9,9 +9,17 @@ import { notifyUserRegistered } from "../../service/adminEvents.js";
 // ─────────────────────────────────────────────────────────────
 export const getAllUsers = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const totalUsers = await userModel.countDocuments();
+
     const users = await userModel
       .find()
-      .select("username email gender role isVerified createdAt updatedAt imageUrl");
+      .select("username email gender role isVerified createdAt updatedAt imageUrl")
+      .skip(skip)
+      .limit(limit);
 
     const usersWithImage = users.map((user) => {
       const userObj = user.toObject();
@@ -19,7 +27,14 @@ export const getAllUsers = async (req, res) => {
       return userObj;
     });
 
-    return res.status(200).json({ success: true, count: usersWithImage.length, users: usersWithImage });
+    return res.status(200).json({
+      success: true,
+      count: usersWithImage.length,
+      totalUsers,
+      totalPages: Math.ceil(totalUsers / limit),
+      currentPage: page,
+      users: usersWithImage,
+    });
   } catch (error) {
     console.log("Error in get all users api: ", error);
     return res.status(500).json({ success: false, message: "Server error while fetching users" });
