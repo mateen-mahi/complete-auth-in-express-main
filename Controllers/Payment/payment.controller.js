@@ -1,9 +1,9 @@
 // controllers/payment.controller.js
-import stripe from "../config/stripe.js";
-import Order from "../models/order.model.js";
-import Course from "../models/course.model.js";
-import { calculateOrderTotal } from "../utils/orderPricing.js";
-import { notifyEnrollment } from "../services/adminEvents.js";
+import stripe from "../../config/stripe-config.js";
+import Order from "../../models/order.model.js";
+import Course from "../../models/courses.model.js";
+import { calculateOrderTotal } from "../../utils/orderPricing.js";
+import { notifyEnrollment } from "../../service/adminEvents.js";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/v1/payments/quote
