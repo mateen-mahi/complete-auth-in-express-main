@@ -17,6 +17,7 @@ import environment from 'dotenv';
 import cors from 'cors';
 import verifyAuth from './Middlewares/AuthMiddleware.js';
 import certificateRouter from './routes/certificate.route.js';
+import paymentRoutes from './routes/payment.route.js';
 
 environment.config(); 
 
@@ -57,6 +58,7 @@ app.use("/api/v1/progress", verifyAuth, progressRouter);
 app.use("/api/v1/messages",verifyAuth, messageRouter)
 app.use("/api/v1/admin",verifyAuth,adminRoutes);
 app.use("/api/v1/certificates",verifyAuth,certificateRouter)
+app.use("/api/v1/payments",verifyAuth,paymentRoutes);
 
 const PORT = process.env.PORT || 8080;
 
