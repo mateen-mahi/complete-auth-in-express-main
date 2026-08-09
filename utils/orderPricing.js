@@ -1,6 +1,6 @@
 // utils/orderPricing.js
 //
-// Single source of truth for "what does this course cost, after any promo
+// Single source of truth for "what does this order cost, after any promo
 // code and tax". Both the /quote endpoint (pure display, called on every
 // promo code attempt) and /create-payment-intent (the actual charge) call
 // THIS SAME function — so the price a user sees is guaranteed to be the
@@ -9,7 +9,14 @@ import { validatePromoCode } from "./promoCodes.js";
 
 const TAX_RATE = 0.18; // adjust to match your actual tax requirement
 
-export function calculateOrderTotal({ coursePrice, promoCode }) {
+// coursePrices: number[] — price of every course in the order.
+// Summed up front, then the exact same discount/tax math as before runs
+// on the combined total.
+export function calculateOrderTotal({ coursePrices, promoCode }) {
+  const coursePrice = Number(
+    coursePrices.reduce((sum, price) => sum + price, 0).toFixed(2)
+  );
+
   const discountPercent = validatePromoCode(promoCode);
   const discountAmount = discountPercent
     ? Number(((coursePrice * discountPercent) / 100).toFixed(2))
@@ -25,7 +32,6 @@ export function calculateOrderTotal({ coursePrice, promoCode }) {
     discountAmount,
     taxAmount,
     total,
-    // Stripe requires amounts in the smallest currency unit — cents for USD
     totalInCents: Math.round(total * 100),
   };
 }

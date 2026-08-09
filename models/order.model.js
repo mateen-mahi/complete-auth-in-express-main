@@ -7,10 +7,11 @@ const orderSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    courseId: {
-      type: mongoose.Schema.Types.ObjectId,
+    courseIds: {
+      type: [mongoose.Schema.Types.ObjectId],
       ref: "Course",
       required: true,
+      validate: (v) => Array.isArray(v) && v.length > 0,
     },
     amountPaid: {
       type: Number,
@@ -33,7 +34,7 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
     gatewayTransactionId: {
-      type: String, 
+      type: String,
       required: true,
       unique: true,
     },
