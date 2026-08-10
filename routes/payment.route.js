@@ -1,6 +1,5 @@
 // routes/payment.route.js
 import express from "express";
-import verifyAuth from "../Middlewares/AuthMiddleware.js";
 import { getPriceQuote, createPaymentIntent, stripeWebhook } from "../Controllers/Payment/payment.controller.js";
 
 const paymentRoutes = express.Router();
