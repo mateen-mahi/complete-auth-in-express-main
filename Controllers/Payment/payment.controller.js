@@ -43,7 +43,11 @@ export const getPriceQuote = async (req, res) => {
 export const createPaymentIntent = async (req, res) => {
   try {
     const { courseIds, promoCode } = req.body;
-    const userId = req.user.id;
+      const userId = req.user?.id || req.user?._id; // defensive: handle either shape
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Authentication required" });
+    }
 
     if (!Array.isArray(courseIds) || courseIds.length === 0) {
       return res.status(400).json({ success: false, message: "courseIds is required and must be a non-empty array" });
