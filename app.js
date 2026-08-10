@@ -18,6 +18,8 @@ import cors from 'cors';
 import verifyAuth from './Middlewares/AuthMiddleware.js';
 import certificateRouter from './routes/certificate.route.js';
 import paymentRoutes from './routes/payment.route.js';
+import { stripeWebhook } from './Controllers/Payment/payment.controller.js';
+
 
 environment.config(); 
 
@@ -29,6 +31,15 @@ const allowedOrigins = [
 
 const app = express();
 const server = http.createServer(app);
+
+
+app.post(
+  "/api/v1/payments/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhook
+);
+
+
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cors({
@@ -79,3 +90,7 @@ const startServer = async () => {
 };
 
 startServer();
+
+
+
+
