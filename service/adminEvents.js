@@ -49,3 +49,41 @@ export const notifyLoginFailed = ({ email }) =>
 
 export const notifySystemStats = (stats) =>
   emitAdminEvent("system:stats", stats);
+
+
+
+
+
+
+// ── Progress ─────────────────────────────────────────────────────────────
+export const notifyProgressUpdated = ({ userId, userEmail, courseId, courseTitle, overallProgress, lectureId }) =>
+  emitAdminEvent("progress:updated", {
+    userId,
+    userEmail,
+    courseId,
+    courseTitle,
+    overallProgress,
+    lectureId,
+    at: new Date().toISOString(),
+  });
+
+export const notifyQuizAttempted = ({ userId, userEmail, courseId, quizId, score, totalQuestions, correctAnswers }) =>
+  emitAdminEvent("progress:quizAttempted", {
+    userId,
+    userEmail,
+    courseId,
+    quizId,
+    score,
+    totalQuestions,
+    correctAnswers,
+    at: new Date().toISOString(),
+  });
+
+export const notifyCourseCompleted = ({ userId, userEmail, courseId, courseTitle }) =>
+  emitAdminEvent("progress:courseCompleted", {
+    userId,
+    userEmail,
+    courseId,
+    courseTitle,
+    at: new Date().toISOString(),
+  });

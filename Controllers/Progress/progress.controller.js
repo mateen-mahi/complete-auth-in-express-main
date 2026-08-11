@@ -1,307 +1,234 @@
-import mongoose from 'mongoose';
-import Progress from '../../models/progress.model.js';
-import Course from '../../models/courses.model.js';
-import Lecture from '../../models/lectures.model.js';
-import Quiz from '../../models/quiz.model.js';
+import mongoose from "mongoose";
+import Progress from "../../models/progress.model.js";
+import Course from "../../models/courses.model.js";
+import { emitToUser } from "../../service/SocketService.js";
+import { notifyProgressUpdated, notifyQuizAttempted, notifyCourseCompleted } from "../../service/adminEvents.js";
 
-// ─────────────────────────────────────────────────────────────
-// Centralised error handler
-// ─────────────────────────────────────────────────────────────
-const handleControllerError = (res, error) => {
-  console.error(error);
+// ── Helpers ─────────────────────────────────────────────────────────────
 
-  if (error.name === 'CastError') {
-    return res.status(400).json({ success: false, message: 'Invalid ID format' });
+/**
+ * Recalculates overallProgress + completed flag on a progress doc, based on
+ * how many lectures are watched vs. total lectures on the course.
+ * Mutates the doc in place. Does NOT save — caller is responsible for that.
+ * Returns true if this call is what just pushed the course to 100%.
+ */
+function recalcOverallProgress(progressDoc, course) {
+  const totalLectures = course?.lectures?.length || 0;
+  const watchedCount = progressDoc.lectures.filter((l) => l.watched).length;
+
+  const wasCompleted = progressDoc.completed;
+
+  progressDoc.overallProgress =
+    totalLectures > 0 ? Math.min(100, Math.round((watchedCount / totalLectures) * 100)) : 0;
+
+  progressDoc.completed = totalLectures > 0 && watchedCount >= totalLectures;
+
+  return !wasCompleted && progressDoc.completed;
+}
+
+/**
+ * Finds a user's progress doc for a course, creating an empty one if it
+ * doesn't exist yet. Keeps the unique (userId, courseId) index happy.
+ */
+async function getOrCreateProgress(userId, courseId) {
+  let progress = await Progress.findOne({ userId, courseId });
+  if (!progress) {
+    progress = await Progress.create({ userId, courseId, lectures: [], quizzes: [] });
   }
+  return progress;
+}
 
-  if (error.name === 'ValidationError') {
-    return res.status(400).json({ success: false, message: error.message });
-  }
+// ── Controllers ─────────────────────────────────────────────────────────
 
-  return res.status(500).json({ success: false, message: 'Something went wrong. Please try again.' });
-};
-
-// ─────────────────────────────────────────────────────────────
-// Helper: Recalculate overallProgress & completed flags
-// Returns the updated progress document
-// ─────────────────────────────────────────────────────────────
-const recalculateProgress = async (userId, courseId) => {
-  const progress = await Progress.findOne({ userId, courseId });
-  if (!progress) return null;
-
-  const course = await Course.findById(courseId).select('lectures').lean();
-  if (!course) return progress; // course deleted? keep old progress
-
-  const totalLectures = course.lectures?.length || 1;
-  const watchedCount = progress.lectures.filter(l => l.watched).length;
-
-  // You could also factor in quiz scores – here we use only lectures
-  const newProgress = Math.min(Math.round((watchedCount / totalLectures) * 100), 100);
-
-  progress.overallProgress = newProgress;
-  progress.completed = newProgress === 100;
-
-  await progress.save();
-  return progress; // return updated doc
-};
-
-// ─────────────────────────────────────────────────────────────
-// 1. GET progress for a specific course (dashboard view)
-// ─────────────────────────────────────────────────────────────
-export const getCourseProgress = async (req, res) => {
+// GET /api/progress/:courseId
+export const getMyProgress = async (req, res) => {
   try {
+    const userId = req.user.id;
     const { courseId } = req.params;
-    const userId = req.user._id;
+
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: "Invalid course id" });
+    }
 
     const progress = await Progress.findOne({ userId, courseId })
-      .populate('lectures.lectureId', 'title duration')
-      .populate('quizzes.quizId', 'title subject')
-      .lean(); // plain JS object for performance
+      .populate("lectures.lectureId", "title duration")
+      .populate("quizzes.quizId", "title");
 
     if (!progress) {
-      return res.status(404).json({
-        success: false,
-        message: 'No progress found for this course',
+      // Not an error — user just hasn't started this course yet.
+      return res.status(200).json({
+        success: true,
+        progress: {
+          userId,
+          courseId,
+          lectures: [],
+          quizzes: [],
+          overallProgress: 0,
+          completed: false,
+        },
       });
     }
 
-    res.status(200).json({ success: true, data: progress });
+    return res.status(200).json({ success: true, progress });
   } catch (error) {
-    return handleControllerError(res, error);
+    console.error("Error in getMyProgress:", error);
+    return res.status(500).json({ success: false, message: "Server error while fetching progress" });
   }
 };
 
-// ─────────────────────────────────────────────────────────────
-// 2. Mark a lecture as watched (or update watching position)
-// ─────────────────────────────────────────────────────────────
-export const markLectureWatched = async (req, res) => {
+// GET /api/progress
+// All of the logged-in user's progress records, across every course.
+export const getMyAllProgress = async (req, res) => {
   try {
-    const { lectureId, courseId, lastPosition } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id;
 
-    // Validate required fields
-    if (!lectureId || !courseId) {
-      return res.status(400).json({
-        success: false,
-        message: 'lectureId and courseId are required',
-      });
+    const progressList = await Progress.find({ userId })
+      .populate("courseId", "title thumbnail")
+      .sort({ updatedAt: -1 });
+
+    return res.status(200).json({ success: true, count: progressList.length, progress: progressList });
+  } catch (error) {
+    console.error("Error in getMyAllProgress:", error);
+    return res.status(500).json({ success: false, message: "Server error while fetching progress list" });
+  }
+};
+
+// PATCH /api/progress/:courseId/lecture
+// Body: { lectureId, watched, lastPosition }
+export const updateLectureProgress = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { courseId } = req.params;
+    const { lectureId, watched, lastPosition } = req.body;
+
+    if (!mongoose.isValidObjectId(courseId) || !mongoose.isValidObjectId(lectureId)) {
+      return res.status(400).json({ success: false, message: "Invalid course or lecture id" });
     }
 
-    // Ensure lastPosition is a number (if provided)
-    const position = lastPosition !== undefined ? Number(lastPosition) : 0;
-    if (isNaN(position)) {
-      return res.status(400).json({
-        success: false,
-        message: 'lastPosition must be a valid number',
-      });
+    const course = await Course.findById(courseId).select("title lectures");
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
     }
 
-    // Check if lecture exists
-    const lecture = await Lecture.findById(lectureId);
-    if (!lecture) {
-      return res.status(404).json({
-        success: false,
-        message: 'Lecture not found',
-      });
+    // Reject lectures that don't actually belong to this course.
+    const belongsToCourse = course.lectures.some((id) => String(id) === String(lectureId));
+    if (!belongsToCourse) {
+      return res.status(400).json({ success: false, message: "This lecture does not belong to the given course" });
     }
 
-    // Find or create progress document
-    let progress = await Progress.findOne({ userId, courseId });
-    if (!progress) {
-      progress = new Progress({ userId, courseId, lectures: [], quizzes: [] });
-    }
+    const progress = await getOrCreateProgress(userId, courseId);
 
-    // Update or insert lecture entry
-    const lectureEntry = progress.lectures.find(
-      l => l.lectureId.toString() === lectureId
-    );
+    const existingLecture = progress.lectures.find((l) => String(l.lectureId) === String(lectureId));
 
-    if (lectureEntry) {
-      // Update existing
-      lectureEntry.watched = true;
-      lectureEntry.lastPosition = position;
-      lectureEntry.completedAt = new Date();
+    if (existingLecture) {
+      if (typeof watched === "boolean") existingLecture.watched = watched;
+      if (typeof lastPosition === "number") existingLecture.lastPosition = lastPosition;
+      if (watched === true && !existingLecture.completedAt) existingLecture.completedAt = new Date();
     } else {
-      // Add new
       progress.lectures.push({
         lectureId,
-        watched: true,
-        lastPosition: position,
-        completedAt: new Date(),
+        watched: Boolean(watched),
+        lastPosition: typeof lastPosition === "number" ? lastPosition : 0,
+        completedAt: watched ? new Date() : undefined,
       });
     }
 
-    // Save and recalculate overall progress
+    const justCompleted = recalcOverallProgress(progress, course);
     await progress.save();
-    const updatedProgress = await recalculateProgress(userId, courseId);
 
-    res.status(200).json({ success: true, data: updatedProgress });
+    // ── Real-time: push the update to the user's own sockets (multi-device
+    // sync) and to the admin dashboard (live "who's watching what").
+    emitToUser(userId, "progress:lectureUpdated", {
+      courseId,
+      lectureId,
+      overallProgress: progress.overallProgress,
+      completed: progress.completed,
+    });
+
+    notifyProgressUpdated({
+      userId,
+      userEmail: req.user.email,
+      courseId,
+      courseTitle: course.title,
+      overallProgress: progress.overallProgress,
+      lectureId,
+    });
+
+    if (justCompleted) {
+      emitToUser(userId, "course:completed", { courseId, courseTitle: course.title });
+      notifyCourseCompleted({ userId, userEmail: req.user.email, courseId, courseTitle: course.title });
+    }
+
+    return res.status(200).json({ success: true, progress });
   } catch (error) {
-    return handleControllerError(res, error);
+    console.error("Error in updateLectureProgress:", error);
+    return res.status(500).json({ success: false, message: "Server error while updating lecture progress" });
   }
 };
 
-// ─────────────────────────────────────────────────────────────
-// 3. Submit a quiz attempt and store the result
-// ─────────────────────────────────────────────────────────────
+// POST /api/progress/:courseId/quiz
+// Body: { quizId, score, totalQuestions, correctAnswers, answers }
 export const submitQuizAttempt = async (req, res) => {
   try {
-    const { quizId, courseId, answers } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id;
+    const { courseId } = req.params;
+    const { quizId, score, totalQuestions, correctAnswers, answers } = req.body;
 
-    if (!quizId || !courseId || !Array.isArray(answers)) {
-      return res.status(400).json({
-        success: false,
-        message: 'quizId, courseId, and answers array are required',
-      });
+    if (!mongoose.isValidObjectId(courseId) || !mongoose.isValidObjectId(quizId)) {
+      return res.status(400).json({ success: false, message: "Invalid course or quiz id" });
     }
 
-    // Fetch quiz to calculate score
-    const quiz = await Quiz.findById(quizId).lean();
-    if (!quiz) {
-      return res.status(404).json({
-        success: false,
-        message: 'Quiz not found',
-      });
+    if (typeof score !== "number" || score < 0) {
+      return res.status(400).json({ success: false, message: "A valid non-negative score is required" });
     }
 
-    const totalQuestions = quiz.questions.length;
-    if (answers.length !== totalQuestions) {
-      return res.status(400).json({
-        success: false,
-        message: `Expected ${totalQuestions} answers, got ${answers.length}`,
-      });
+    const course = await Course.findById(courseId).select("title");
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found" });
     }
 
-    let correctAnswers = 0;
-    quiz.questions.forEach((q, index) => {
-      if (answers[index] === q.correctAnswer) correctAnswers++;
-    });
+    const progress = await getOrCreateProgress(userId, courseId);
 
-    const score = Math.round((correctAnswers / totalQuestions) * 100);
+    const attemptData = {
+      quizId,
+      score,
+      totalQuestions,
+      correctAnswers,
+      answers: Array.isArray(answers) ? answers : [],
+      attemptedAt: new Date(),
+    };
 
-    // Find or create progress
-    let progress = await Progress.findOne({ userId, courseId });
-    if (!progress) {
-      progress = new Progress({ userId, courseId, lectures: [], quizzes: [] });
-    }
-
-    // Update or insert quiz attempt
-    const existingAttempt = progress.quizzes.find(
-      q => q.quizId.toString() === quizId
-    );
-
-    if (existingAttempt) {
-      // Overwrite with latest attempt (you could keep best score instead)
-      existingAttempt.score = score;
-      existingAttempt.totalQuestions = totalQuestions;
-      existingAttempt.correctAnswers = correctAnswers;
-      existingAttempt.answers = answers;
-      existingAttempt.attemptedAt = new Date();
+    // Upsert: one entry per quiz — a retake overwrites the previous score.
+    const existingIndex = progress.quizzes.findIndex((q) => String(q.quizId) === String(quizId));
+    if (existingIndex !== -1) {
+      progress.quizzes[existingIndex] = attemptData;
     } else {
-      progress.quizzes.push({
-        quizId,
-        score,
-        totalQuestions,
-        correctAnswers,
-        answers,
-        attemptedAt: new Date(),
-      });
+      progress.quizzes.push(attemptData);
     }
 
     await progress.save();
-    const updatedProgress = await recalculateProgress(userId, courseId);
 
-    // Return the attempt result together with updated progress
-    res.status(200).json({
-      success: true,
-      data: {
-        score,
-        correctAnswers,
-        totalQuestions,
-        attemptedAt: new Date(),
-        overallProgress: updatedProgress?.overallProgress,
-        completed: updatedProgress?.completed,
-      },
+    emitToUser(userId, "progress:quizAttempted", {
+      courseId,
+      quizId,
+      score,
+      totalQuestions,
+      correctAnswers,
     });
-  } catch (error) {
-    return handleControllerError(res, error);
-  }
-};
 
-// ─────────────────────────────────────────────────────────────
-// 4. Get a specific quiz attempt for review
-// ─────────────────────────────────────────────────────────────
-export const getQuizAttempt = async (req, res) => {
-  try {
-    const { quizId } = req.params;
-    const { courseId } = req.query;
-    const userId = req.user._id;
-
-    if (!courseId) {
-      return res.status(400).json({
-        success: false,
-        message: 'courseId query parameter is required',
-      });
-    }
-
-    const progress = await Progress.findOne({ userId, courseId }).lean();
-    if (!progress) {
-      return res.status(404).json({
-        success: false,
-        message: 'No progress found for this course',
-      });
-    }
-
-    const attempt = progress.quizzes.find(q => q.quizId.toString() === quizId);
-    if (!attempt) {
-      return res.status(404).json({
-        success: false,
-        message: 'No attempt found for this quiz',
-      });
-    }
-
-    // Populate quiz title/subject (separate query)
-    const quiz = await Quiz.findById(quizId).select('title subject').lean();
-    const result = {
-      ...attempt,
-      quizTitle: quiz?.title,
-      quizSubject: quiz?.subject,
-    };
-
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    return handleControllerError(res, error);
-  }
-};
-
-// ─────────────────────────────────────────────────────────────
-// 5. Get all progress for a user (paginated)
-// ─────────────────────────────────────────────────────────────
-export const getAllUserProgress = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-
-    const [progress, total] = await Promise.all([
-      Progress.find({ userId })
-        .populate('courseId', 'title thumbnail')
-        .sort({ updatedAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Progress.countDocuments({ userId }),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      data: progress,
-      total,
-      page,
-      pages: Math.ceil(total / limit),
+    notifyQuizAttempted({
+      userId,
+      userEmail: req.user.email,
+      courseId,
+      quizId,
+      score,
+      totalQuestions,
+      correctAnswers,
     });
+
+    return res.status(200).json({ success: true, progress });
   } catch (error) {
-    return handleControllerError(res, error);
+    console.error("Error in submitQuizAttempt:", error);
+    return res.status(500).json({ success: false, message: "Server error while submitting quiz attempt" });
   }
 };

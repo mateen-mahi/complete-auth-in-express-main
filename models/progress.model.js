@@ -17,7 +17,7 @@ const progressSchema = new mongoose.Schema({
   quizzes: [
     {
       quizId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quiz' },
-      score: { type: Number, required: true }, 
+      score: { type: Number, required: true ,min:0}, 
       totalQuestions: { type: Number },
       correctAnswers: { type: Number },
       answers: [Number], 
