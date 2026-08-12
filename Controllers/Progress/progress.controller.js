@@ -1,13 +1,18 @@
 import mongoose from "mongoose";
 import Progress from "../../models/progress.model.js";
 import Course from "../../models/courses.model.js";
-import Quiz from "../../models/quiz.model.js"; 
+import Quiz from "../../models/quiz.model.js";
 import { emitToUser } from "../../service/SocketService.js";
 import { notifyProgressUpdated, notifyQuizAttempted, notifyCourseCompleted } from "../../service/adminEvents.js";
 
-// A quiz counts as "complete" toward course progress once scored at/above this.
+// A quiz counts as "passed" toward course progress once scored at/above this.
 // Keep in sync with PASS_THRESHOLD in QuizPage.jsx.
 const QUIZ_PASS_THRESHOLD = 70;
+
+// Fixed weighting: lecture-watching drives most of the bar, quizzes make up
+// the rest — regardless of how many lectures vs. quizzes a course has.
+const LECTURE_WEIGHT = 0.6;
+const QUIZ_WEIGHT = 0.4;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -20,20 +25,17 @@ const QUIZ_PASS_THRESHOLD = 70;
 async function getCourseTotals(courseId) {
   const [course, totalQuizzes] = await Promise.all([
     Course.findById(courseId).select("title lectures"),
-    // ⚠️ Assumes the Quiz model has a `courseId` field, matching how the
-    // frontend fetches quizzes via /quizzes/course/:courseId. Adjust the
-    // field name here if your Quiz schema calls it something else (e.g. `course`).
     Quiz.countDocuments({ courseId }),
   ]);
   return { course, totalLectures: course?.lectures?.length || 0, totalQuizzes };
 }
 
 /**
- * Recalculates overallProgress + completed, treating every lecture and
- * every quiz on the course as one equal-weight "item":
- *   overallProgress = (watchedLectures + passedQuizzes) / (totalLectures + totalQuizzes)
- * A lecture counts once watched (30% threshold, enforced client-side).
- * A quiz counts once scored >= QUIZ_PASS_THRESHOLD.
+ * Recalculates overallProgress + completed using a fixed weighted split:
+ *   60% of the bar comes from lecture-watch ratio (watchedLectures/totalLectures)
+ *   40% of the bar comes from quiz-pass ratio (passedQuizzes/totalQuizzes)
+ * If a course has no lectures, or no quizzes, all weight shifts to whichever
+ * dimension actually exists so the bar can still reach 100%.
  * Mutates the doc in place. Does NOT save — caller saves.
  * Returns true if this call is what just pushed the course to 100%.
  */
@@ -41,13 +43,30 @@ function recalcOverallProgress(progressDoc, totalLectures, totalQuizzes) {
   const watchedLectures = progressDoc.lectures.filter((l) => l.watched).length;
   const passedQuizzes = progressDoc.quizzes.filter((q) => q.score >= QUIZ_PASS_THRESHOLD).length;
 
-  const totalItems = totalLectures + totalQuizzes;
-  const completedItems = watchedLectures + passedQuizzes;
+  const lectureRatio = totalLectures > 0 ? watchedLectures / totalLectures : null;
+  const quizRatio = totalQuizzes > 0 ? passedQuizzes / totalQuizzes : null;
+
+  let percent;
+  if (lectureRatio !== null && quizRatio !== null) {
+    percent = lectureRatio * LECTURE_WEIGHT * 100 + quizRatio * QUIZ_WEIGHT * 100;
+  } else if (lectureRatio !== null) {
+    percent = lectureRatio * 100; // course has no quizzes — lectures are 100% of the bar
+  } else if (quizRatio !== null) {
+    percent = quizRatio * 100; // course has no lectures — quizzes are 100% of the bar
+  } else {
+    percent = 0; // course has neither yet
+  }
 
   const wasCompleted = progressDoc.completed;
 
-  progressDoc.overallProgress = totalItems > 0 ? Math.min(100, Math.round((completedItems / totalItems) * 100)) : 0;
-  progressDoc.completed = totalItems > 0 && completedItems >= totalItems;
+  progressDoc.overallProgress = Math.min(100, Math.round(percent));
+
+  // "Completed" requires every dimension that actually exists on this
+  // course to be fully done — not just the weighted percentage hitting 100
+  // (which it can't anyway unless both are done, but this is explicit).
+  const lectureDone = lectureRatio === null || lectureRatio >= 1;
+  const quizDone = quizRatio === null || quizRatio >= 1;
+  progressDoc.completed = (lectureRatio !== null || quizRatio !== null) && lectureDone && quizDone;
 
   return !wasCompleted && progressDoc.completed;
 }
@@ -224,9 +243,6 @@ export const submitQuizAttempt = async (req, res) => {
       progress.quizzes.push(attemptData);
     }
 
-    // Quizzes now count toward overallProgress too — same formula, same
-    // helper, as lecture watching. This is the fix: previously only the
-    // lecture endpoint ever recalculated overallProgress.
     const justCompleted = recalcOverallProgress(progress, totalLectures, totalQuizzes);
     await progress.save();
 
