@@ -1,235 +1,449 @@
 // controllers/chatbot.controller.js
 //
 // Lightweight AI chatbot controller.
-// Uses Node.js native fetch — no provider SDKs required.
+//
+// Uses Node.js native fetch.
+// No OpenAI SDK.
+// No Gemini SDK.
+// No additional npm dependencies.
 //
 // Supported providers:
-//   - OpenAI
-//   - Gemini
+// - OpenAI
+// - Gemini
 //
-// The provider registry keeps provider-specific request/response
-// differences isolated so additional OpenAI-compatible providers
-// can be added without changing the controller flow.
+// Environment variables:
+//
+// OPENAI_API_KEY=your_openai_key
+// OPENAI_MODEL=gpt-4o-mini
+//
+// GEMINI_API_KEY=your_gemini_key
+//
+// Gemini model is intentionally fixed to:
+// gemini-2.5-flash
+//
+// The frontend sends:
+//
+// {
+//   provider: "openai" | "gemini",
+//   messages: [
+//     {
+//       role: "user" | "assistant",
+//       content: "Hello"
+//     }
+//   ]
+// }
+//
+// The backend returns a plain text streaming response.
+
 
 // ============================================================
-// Configuration
+// CONFIGURATION
 // ============================================================
 
 const MAX_MESSAGES = 30;
+
 const MAX_MESSAGE_LENGTH = 8000;
-const PROVIDER_TIMEOUT_MS = 60_000;
+
+const PROVIDER_TIMEOUT = 60_000;
+
 
 // ============================================================
-// Provider Registry
+// PROVIDER REGISTRY
 // ============================================================
 
 const PROVIDERS = {
+
+  // ==========================================================
+  // OPENAI
+  // ==========================================================
+
   openai: {
+
     label: "ChatGPT",
 
-    isConfigured: () =>
-      Boolean(process.env.OPENAI_API_KEY),
-
-    buildRequest: (messages) => ({
-      url: "https://api.openai.com/v1/chat/completions",
-
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-
-      body: {
-        model:
-          process.env.OPENAI_MODEL ||
-          "gpt-4o-mini",
-
-        messages,
-
-        stream: true,
-      },
-    }),
-
-    extractText: (json) =>
-      json.choices?.[0]?.delta?.content || "",
-
-    isDone: (data) =>
-      data === "[DONE]",
-  },
-
-  gemini: {
-    label: "Gemini",
-
-    isConfigured: () =>
-      Boolean(process.env.GEMINI_API_KEY),
-
-    buildRequest: (messages) => {
-      const contents = messages.map(
-        (message) => ({
-          role:
-            message.role === "assistant"
-              ? "model"
-              : "user",
-
-          parts: [
-            {
-              text: message.content,
-            },
-          ],
-        })
+    isConfigured() {
+      return Boolean(
+        process.env.OPENAI_API_KEY
       );
+    },
 
-      const model =
-        process.env.GEMINI_MODEL ||
-        "gemini-2.5-flash";
+    buildRequest(messages) {
 
       return {
+
         url:
-          `https://generativelanguage.googleapis.com/v1beta/models/` +
-          `${model}:streamGenerateContent?alt=sse`,
+          "https://api.openai.com/v1/chat/completions",
 
         headers: {
-          "Content-Type": "application/json",
 
-          "x-goog-api-key":
-            process.env.GEMINI_API_KEY,
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${process.env.OPENAI_API_KEY}`,
+
         },
 
         body: {
-          contents,
+
+          model:
+            process.env.OPENAI_MODEL ||
+            "gpt-4o-mini",
+
+          messages,
+
+          stream: true,
+
         },
+
       };
     },
 
-    extractText: (json) =>
-      json.candidates?.[0]?.content?.parts?.[0]
-        ?.text || "",
+    extractText(json) {
 
-    // Gemini streaming ends with the HTTP response.
-    isDone: () => false,
+      return (
+        json
+          ?.choices
+          ?.[
+            0
+          ]
+          ?.delta
+          ?.content || ""
+      );
+    },
+
+    isDone(data) {
+
+      return data === "[DONE]";
+    },
+
   },
+
+
+  // ==========================================================
+  // GEMINI
+  // ==========================================================
+
+  gemini: {
+
+    label: "Gemini",
+
+    isConfigured() {
+
+      return Boolean(
+        process.env.GEMINI_API_KEY
+      );
+    },
+
+    buildRequest(messages) {
+
+      // Gemini uses:
+      //
+      // user
+      // model
+      //
+      // instead of:
+      //
+      // user
+      // assistant
+
+      const contents =
+        messages.map(
+          (message) => ({
+
+            role:
+              message.role ===
+              "assistant"
+                ? "model"
+                : "user",
+
+            parts: [
+
+              {
+                text:
+                  message.content,
+              },
+
+            ],
+
+          })
+        );
+
+
+      return {
+
+        // IMPORTANT:
+        // Keep this model fixed to a valid
+        // current Gemini model.
+
+        url:
+          "https://generativelanguage.googleapis.com/" +
+          "v1beta/models/gemini-2.5-flash" +
+          ":streamGenerateContent?alt=sse",
+
+        headers: {
+
+          "Content-Type":
+            "application/json",
+
+          "x-goog-api-key":
+            process.env.GEMINI_API_KEY,
+
+        },
+
+        body: {
+
+          contents,
+
+        },
+
+      };
+    },
+
+
+    extractText(json) {
+
+      return (
+
+        json
+          ?.candidates
+          ?.[
+            0
+          ]
+          ?.content
+          ?.parts
+          ?.map(
+            (part) =>
+              part?.text || ""
+          )
+          ?.join("") || ""
+
+      );
+    },
+
+
+    isDone() {
+
+      // Gemini closes the HTTP stream
+      // instead of sending [DONE].
+
+      return false;
+    },
+
+  },
+
 };
 
+
 // ============================================================
-// Helpers
+// MESSAGE VALIDATION
 // ============================================================
 
-/**
- * Validate and normalize incoming messages.
- */
-const validateMessages = (messages) => {
+function validateMessages(messages) {
+
   if (!Array.isArray(messages)) {
+
     return {
+
       valid: false,
-      message: "messages must be an array.",
+
+      message:
+        "Messages must be an array.",
+
     };
   }
+
 
   if (messages.length === 0) {
+
     return {
+
       valid: false,
-      message: "messages array cannot be empty.",
+
+      message:
+        "Messages array cannot be empty.",
+
     };
   }
 
-  if (messages.length > MAX_MESSAGES) {
+
+  if (
+    messages.length >
+    MAX_MESSAGES
+  ) {
+
     return {
+
       valid: false,
-      message: `Maximum ${MAX_MESSAGES} messages are allowed.`,
+
+      message:
+        `Maximum ${MAX_MESSAGES} messages are allowed.`,
+
     };
   }
+
 
   for (const message of messages) {
-    if (!message || typeof message !== "object") {
+
+    if (
+      !message ||
+      typeof message !==
+        "object"
+    ) {
+
       return {
+
         valid: false,
-        message: "Invalid message format.",
+
+        message:
+          "Invalid message format.",
+
       };
     }
 
+
     if (
-      !["user", "assistant"].includes(
+      ![
+        "user",
+        "assistant",
+      ].includes(
         message.role
       )
     ) {
+
       return {
+
         valid: false,
+
         message:
-          'Message role must be either "user" or "assistant".',
+          'Message role must be "user" or "assistant".',
+
       };
     }
 
+
     if (
-      typeof message.content !== "string"
+      typeof message.content !==
+      "string"
     ) {
+
       return {
+
         valid: false,
+
         message:
           "Message content must be a string.",
+
       };
     }
 
-    const content =
-      message.content.trim();
-
-    if (!content) {
-      return {
-        valid: false,
-        message:
-          "Message content cannot be empty.",
-      };
-    }
 
     if (
-      content.length >
-      MAX_MESSAGE_LENGTH
+      !message.content.trim()
     ) {
+
       return {
+
         valid: false,
-        message: `Each message must be ${MAX_MESSAGE_LENGTH} characters or less.`,
+
+        message:
+          "Message content cannot be empty.",
+
       };
     }
+
+
+    if (
+      message.content.length >
+      MAX_MESSAGE_LENGTH
+    ) {
+
+      return {
+
+        valid: false,
+
+        message:
+          `Message cannot exceed ${MAX_MESSAGE_LENGTH} characters.`,
+
+      };
+    }
+
   }
 
+
   return {
+
     valid: true,
 
-    messages: messages.map(
-      (message) => ({
-        role: message.role,
-        content: message.content.trim(),
-      })
-    ),
-  };
-};
+    messages:
+      messages.map(
+        (message) => ({
 
-/**
- * Read a provider's SSE stream and forward extracted
- * text chunks to the client.
- */
-const streamProviderResponse = async ({
+          role:
+            message.role,
+
+          content:
+            message.content.trim(),
+
+        })
+      ),
+
+  };
+
+}
+
+
+// ============================================================
+// STREAM PROVIDER RESPONSE
+// ============================================================
+
+async function streamProviderResponse({
+
+  provider,
+
   providerResponse,
-  config,
+
   res,
-  requestSignal,
-}) => {
-  if (!providerResponse.body) {
+
+  signal,
+
+}) {
+
+  if (
+    !providerResponse.body
+  ) {
+
     throw new Error(
       "Provider returned an empty response body."
     );
   }
 
-  const reader =
-    providerResponse.body.getReader();
 
-  const decoder = new TextDecoder();
+  const reader =
+    providerResponse
+      .body
+      .getReader();
+
+
+  const decoder =
+    new TextDecoder();
+
 
   let buffer = "";
 
+
   try {
+
     while (true) {
-      if (requestSignal?.aborted) {
+
+      if (
+        signal.aborted
+      ) {
+
         try {
+
           await reader.cancel();
+
         } catch {
           // Ignore cancellation errors.
         }
@@ -237,188 +451,261 @@ const streamProviderResponse = async ({
         return;
       }
 
-      const { done, value } =
+
+      const {
+        done,
+        value,
+      } =
         await reader.read();
 
+
       if (done) {
+
         break;
       }
 
-      buffer += decoder.decode(
-        value,
-        { stream: true }
-      );
 
-      // SSE events are separated by a blank line.
-      const events = buffer.split(
-        /\r?\n\r?\n/
-      );
+      buffer +=
+        decoder.decode(
+          value,
+          {
+            stream: true,
+          }
+        );
+
+
+      // SSE events are separated
+      // by a blank line.
+
+      const events =
+        buffer.split(
+          /\r?\n\r?\n/
+        );
+
+
+      // Keep the incomplete
+      // event for the next chunk.
 
       buffer =
         events.pop() || "";
 
-      for (const rawEvent of events) {
+
+      for (
+        const event of events
+      ) {
+
         const lines =
-          rawEvent.split(
+          event.split(
             /\r?\n/
           );
 
-        const dataLines = lines
-          .filter((line) =>
-            line.startsWith("data:")
-          )
-          .map((line) =>
-            line
-              .slice(5)
-              .trim()
-          );
 
-        if (!dataLines.length) {
+        const dataLines =
+          lines
+            .filter(
+              (line) =>
+                line.startsWith(
+                  "data:"
+                )
+            )
+            .map(
+              (line) =>
+                line
+                  .slice(5)
+                  .trim()
+            );
+
+
+        if (
+          dataLines.length ===
+          0
+        ) {
+
           continue;
         }
 
-        const dataString =
-          dataLines.join("\n");
+
+        const data =
+          dataLines.join(
+            "\n"
+          );
+
+
+        // ----------------------------------------------------
+        // OPENAI END OF STREAM
+        // ----------------------------------------------------
 
         if (
-          config.isDone(
-            dataString
-          )
+          provider ===
+            "openai" &&
+          data === "[DONE]"
         ) {
+
           return;
         }
 
-        try {
-          const json =
-            JSON.parse(
-              dataString
-            );
 
-          const text =
-            config.extractText(
+        // ----------------------------------------------------
+        // PARSE JSON
+        // ----------------------------------------------------
+
+        try {
+
+          const json =
+            JSON.parse(data);
+
+
+          let text = "";
+
+
+          // --------------------------------------------------
+          // OPENAI
+          // --------------------------------------------------
+
+          if (
+            provider ===
+            "openai"
+          ) {
+
+            text =
               json
-            );
+                ?.choices
+                ?.[
+                  0
+                ]
+                ?.delta
+                ?.content ||
+              "";
+
+          }
+
+
+          // --------------------------------------------------
+          // GEMINI
+          // --------------------------------------------------
+
+          if (
+            provider ===
+            "gemini"
+          ) {
+
+            text =
+              json
+                ?.candidates
+                ?.[
+                  0
+                ]
+                ?.content
+                ?.parts
+                ?.map(
+                  (part) =>
+                    part?.text ||
+                    ""
+                )
+                ?.join("") ||
+              "";
+
+          }
+
+
+          // --------------------------------------------------
+          // SEND CHUNK TO FRONTEND
+          // --------------------------------------------------
 
           if (
             text &&
             !res.destroyed
           ) {
+
             res.write(text);
+
           }
+
         } catch (error) {
-          // Ignore malformed SSE fragments.
-          // Streaming providers occasionally return
-          // metadata events that don't contain text.
+
           console.warn(
-            "[Chatbot] Ignoring invalid SSE event:",
+            `[Chatbot] Failed to parse ${provider} SSE chunk:`,
             error.message
           );
+
         }
+
       }
+
     }
 
-    // Process any remaining complete data
-    // that was left in the buffer.
-    const finalLines =
-      buffer.split(/\r?\n/);
-
-    const finalDataLines =
-      finalLines
-        .filter((line) =>
-          line.startsWith("data:")
-        )
-        .map((line) =>
-          line
-            .slice(5)
-            .trim()
-        );
-
-    if (finalDataLines.length) {
-      const finalData =
-        finalDataLines.join("\n");
-
-      if (
-        !config.isDone(finalData)
-      ) {
-        try {
-          const json =
-            JSON.parse(
-              finalData
-            );
-
-          const text =
-            config.extractText(
-              json
-            );
-
-          if (
-            text &&
-            !res.destroyed
-          ) {
-            res.write(text);
-          }
-        } catch {
-          // Ignore incomplete final data.
-        }
-      }
-    }
   } finally {
+
     try {
+
       reader.releaseLock();
+
     } catch {
-      // Ignore release errors.
+      // Ignore.
     }
+
   }
-};
+
+}
+
 
 // ============================================================
+// GET AVAILABLE PROVIDERS
+// ============================================================
+//
 // GET /api/v1/chatbot/providers
-// ============================================================
 //
-// Returns providers available to the frontend.
-// API keys are NEVER returned.
+// Returns only providers that have an API key configured.
 //
-// Example response:
-//
-// {
-//   success: true,
-//   providers: [
-//     { id: "openai", label: "ChatGPT" },
-//     { id: "gemini", label: "Gemini" }
-//   ]
-// }
-
-// ============================================================
 
 export const getAvailableProviders = (
   req,
   res
 ) => {
-  const providers = Object.entries(
-    PROVIDERS
-  )
-    .filter(([, config]) =>
-      config.isConfigured()
+
+  const providers =
+    Object.entries(
+      PROVIDERS
     )
-    .map(([id, config]) => ({
-      id,
-      label: config.label,
-    }));
+
+      .filter(
+        ([, config]) =>
+          config.isConfigured()
+      )
+
+      .map(
+        ([id, config]) => ({
+
+          id,
+
+          label:
+            config.label,
+
+        })
+      );
+
 
   return res.status(200).json({
+
     success: true,
+
     providers,
+
   });
+
 };
 
+
 // ============================================================
+// POST CHAT MESSAGE
+// ============================================================
+//
 // POST /api/v1/chatbot/message
-// ============================================================
 //
 // Body:
 //
 // {
-//   provider: "openai",
+//   provider: "gemini",
 //   messages: [
 //     {
 //       role: "user",
@@ -428,300 +715,539 @@ export const getAvailableProviders = (
 // }
 //
 // Response:
-// Plain text stream.
-// The frontend reads the response incrementally.
+//
+// Plain text stream
+//
 
-// ============================================================
+export const sendChatMessage =
+  async (
+    req,
+    res
+  ) => {
 
-export const sendChatMessage = async (
-  req,
-  res
-) => {
-  let providerResponse = null;
+    let timeoutId;
 
-  try {
-    const {
-      provider,
-      messages,
-    } = req.body || {};
-
-    // --------------------------------------------------------
-    // Validate provider
-    // --------------------------------------------------------
-
-    if (
-      !provider ||
-      typeof provider !==
-        "string" ||
-      !PROVIDERS[provider]
-    ) {
-      return res.status(400).json({
-        success: false,
-
-        message:
-          `Invalid or missing provider. ` +
-          `Available providers: ${Object.keys(
-            PROVIDERS
-          ).join(", ")}`,
-      });
-    }
-
-    const config =
-      PROVIDERS[provider];
-
-    // --------------------------------------------------------
-    // Validate provider configuration
-    // --------------------------------------------------------
-
-    if (!config.isConfigured()) {
-      console.error(
-        `[Chatbot] ${provider} API key is not configured.`
-      );
-
-      return res.status(500).json({
-        success: false,
-
-        message:
-          `${config.label} is not configured on the server.`,
-      });
-    }
-
-    // --------------------------------------------------------
-    // Validate messages
-    // --------------------------------------------------------
-
-    const validation =
-      validateMessages(
-        messages
-      );
-
-    if (!validation.valid) {
-      return res.status(400).json({
-        success: false,
-        message:
-          validation.message,
-      });
-    }
-
-    const validMessages =
-      validation.messages;
-
-    // --------------------------------------------------------
-    // Build provider request
-    // --------------------------------------------------------
-
-    const {
-      url,
-      headers,
-      body,
-    } =
-      config.buildRequest(
-        validMessages
-      );
-
-    // --------------------------------------------------------
-    // Provider timeout
-    // --------------------------------------------------------
-
-    const controller =
+    const abortController =
       new AbortController();
 
-    const timeoutId =
-      setTimeout(() => {
-        controller.abort();
-      }, PROVIDER_TIMEOUT_MS);
-
-    // --------------------------------------------------------
-    // Request provider
-    // --------------------------------------------------------
-
-    providerResponse =
-      await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(
-          body
-        ),
-        signal:
-          controller.signal,
-      });
-
-    clearTimeout(timeoutId);
-
-    // --------------------------------------------------------
-    // Provider returned an error
-    // --------------------------------------------------------
-
-    if (
-      !providerResponse.ok
-    ) {
-      const errorText =
-        await providerResponse
-          .text()
-          .catch(() => "");
-
-      console.error(
-        `[Chatbot] ${provider} request failed ` +
-          `(${providerResponse.status}):`,
-        errorText
-      );
-
-      return res.status(502).json({
-        success: false,
-
-        message:
-          `The ${config.label} provider returned an error. ` +
-          `Please try again.`,
-      });
-    }
-
-    // --------------------------------------------------------
-    // Provider did not return a stream
-    // --------------------------------------------------------
-
-    if (
-      !providerResponse.body
-    ) {
-      console.error(
-        `[Chatbot] ${provider} returned no response body.`
-      );
-
-      return res.status(502).json({
-        success: false,
-
-        message:
-          "The AI provider returned an empty response.",
-      });
-    }
-
-    // --------------------------------------------------------
-    // Client may disconnect while streaming
-    // --------------------------------------------------------
 
     let clientDisconnected =
       false;
 
-    const handleDisconnect =
-      () => {
-        clientDisconnected =
-          true;
 
-        if (!controller.signal.aborted) {
-          controller.abort();
-        }
-      };
+    let disconnectHandler;
 
-    req.on(
-      "close",
-      handleDisconnect
-    );
 
-    // --------------------------------------------------------
-    // Start streaming response
-    // --------------------------------------------------------
+    try {
 
-    res.writeHead(200, {
-      "Content-Type":
-        "text/plain; charset=utf-8",
+      // ------------------------------------------------------
+      // REQUEST DATA
+      // ------------------------------------------------------
 
-      "Transfer-Encoding":
-        "chunked",
+      const {
 
-      "Cache-Control":
-        "no-cache, no-transform",
+        provider,
 
-      "X-Accel-Buffering":
-        "no",
+        messages,
 
-      Connection: "keep-alive",
-    });
+      } =
+        req.body || {};
 
-    // --------------------------------------------------------
-    // Stream provider response
-    // --------------------------------------------------------
 
-    await streamProviderResponse({
-      providerResponse,
-      config,
-      res,
-      requestSignal:
-        controller.signal,
-    });
+      // ------------------------------------------------------
+      // VALIDATE PROVIDER
+      // ------------------------------------------------------
 
-    // Remove disconnect listener
-    req.off(
-      "close",
-      handleDisconnect
-    );
-
-    // --------------------------------------------------------
-    // Finish response
-    // --------------------------------------------------------
-
-    if (
-      !clientDisconnected &&
-      !res.destroyed
-    ) {
-      res.end();
-    }
-  } catch (error) {
-    console.error(
-      "[Chatbot] Controller error:",
-      error
-    );
-
-    // --------------------------------------------------------
-    // Abort / timeout
-    // --------------------------------------------------------
-
-    if (
-      error?.name ===
-        "AbortError"
-    ) {
       if (
-        !res.headersSent &&
-        !res.destroyed
+        typeof provider !==
+          "string" ||
+        !PROVIDERS[provider]
       ) {
-        return res.status(504).json({
+
+        return res.status(400).json({
+
           success: false,
 
           message:
-            "The AI provider took too long to respond.",
+            `Invalid provider. Available providers: ` +
+            `${Object.keys(
+              PROVIDERS
+            ).join(", ")}`,
+
         });
+
       }
+
+
+      const config =
+        PROVIDERS[provider];
+
+
+      // ------------------------------------------------------
+      // CHECK API KEY
+      // ------------------------------------------------------
+
+      if (
+        !config.isConfigured()
+      ) {
+
+        console.error(
+          `[Chatbot] ${provider} API key is missing.`
+        );
+
+
+        return res.status(500).json({
+
+          success: false,
+
+          message:
+            `${config.label} is not configured on the server.`,
+
+        });
+
+      }
+
+
+      // ------------------------------------------------------
+      // VALIDATE MESSAGES
+      // ------------------------------------------------------
+
+      const validation =
+        validateMessages(
+          messages
+        );
+
+
+      if (
+        !validation.valid
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            validation.message,
+
+        });
+
+      }
+
+
+      // ------------------------------------------------------
+      // BUILD PROVIDER REQUEST
+      // ------------------------------------------------------
+
+      const {
+
+        url,
+
+        headers,
+
+        body,
+
+      } =
+        config.buildRequest(
+          validation.messages
+        );
+
+
+      console.log(
+        `[Chatbot] Sending request to ${provider}`
+      );
+
+
+      // ------------------------------------------------------
+      // TIMEOUT
+      // ------------------------------------------------------
+
+      timeoutId =
+        setTimeout(
+          () => {
+
+            abortController.abort();
+
+          },
+          PROVIDER_TIMEOUT
+        );
+
+
+      // ------------------------------------------------------
+      // CLIENT DISCONNECT
+      // ------------------------------------------------------
+
+      disconnectHandler =
+        () => {
+
+          clientDisconnected =
+            true;
+
+
+          if (
+            !abortController
+              .signal
+              .aborted
+          ) {
+
+            abortController.abort();
+
+          }
+
+        };
+
+
+      req.on(
+        "close",
+        disconnectHandler
+      );
+
+
+      // ------------------------------------------------------
+      // CALL AI PROVIDER
+      // ------------------------------------------------------
+
+      let providerResponse;
+
+
+      try {
+
+        providerResponse =
+          await fetch(
+            url,
+            {
+
+              method:
+                "POST",
+
+              headers,
+
+              body:
+                JSON.stringify(
+                  body
+                ),
+
+              signal:
+                abortController
+                  .signal,
+
+            }
+          );
+
+      } catch (error) {
+
+        if (
+          error.name ===
+          "AbortError"
+        ) {
+
+          if (
+            clientDisconnected
+          ) {
+
+            return;
+          }
+
+
+          return res
+            .status(504)
+            .json({
+
+              success: false,
+
+              message:
+                "The AI provider took too long to respond.",
+
+            });
+
+        }
+
+
+        console.error(
+          `[Chatbot] ${provider} network error:`,
+          error
+        );
+
+
+        return res
+          .status(502)
+          .json({
+
+            success: false,
+
+            message:
+              `Unable to connect to ${config.label}.`,
+
+          });
+
+      } finally {
+
+        clearTimeout(
+          timeoutId
+        );
+
+      }
+
+
+      // ------------------------------------------------------
+      // PROVIDER ERROR
+      // ------------------------------------------------------
+
+      if (
+        !providerResponse.ok
+      ) {
+
+        const errorText =
+          await providerResponse
+            .text()
+            .catch(
+              () => ""
+            );
+
+
+        console.error(
+          "=================================================="
+        );
+
+
+        console.error(
+          `[Chatbot] ${provider} request failed`
+        );
+
+
+        console.error(
+          `Status: ${providerResponse.status}`
+        );
+
+
+        // This is the MOST IMPORTANT
+        // debug information.
+
+        console.error(
+          `Response: ${errorText}`
+        );
+
+
+        console.error(
+          "=================================================="
+        );
+
+
+        if (
+          !res.headersSent
+        ) {
+
+          return res
+            .status(502)
+            .json({
+
+              success: false,
+
+              message:
+                `The ${config.label} provider returned an error. Please try again.`,
+
+              providerStatus:
+                providerResponse
+                  .status,
+
+            });
+
+        }
+
+
+        return;
+      }
+
+
+      // ------------------------------------------------------
+      // CHECK RESPONSE BODY
+      // ------------------------------------------------------
+
+      if (
+        !providerResponse.body
+      ) {
+
+        console.error(
+          `[Chatbot] ${provider} returned no response body.`
+        );
+
+
+        return res
+          .status(502)
+          .json({
+
+            success: false,
+
+            message:
+              `${config.label} returned an empty response.`,
+
+          });
+
+      }
+
+
+      // ------------------------------------------------------
+      // START STREAM
+      // ------------------------------------------------------
+
+      res.writeHead(
+        200,
+        {
+
+          "Content-Type":
+            "text/plain; charset=utf-8",
+
+          "Cache-Control":
+            "no-cache, no-transform",
+
+          "X-Accel-Buffering":
+            "no",
+
+          Connection:
+            "keep-alive",
+
+          "Transfer-Encoding":
+            "chunked",
+
+        }
+      );
+
+
+      // ------------------------------------------------------
+      // STREAM RESPONSE
+      // ------------------------------------------------------
+
+      await streamProviderResponse({
+
+        provider,
+
+        providerResponse,
+
+        res,
+
+        signal:
+          abortController
+            .signal,
+
+      });
+
+
+      // ------------------------------------------------------
+      // END RESPONSE
+      // ------------------------------------------------------
+
+      if (
+        !clientDisconnected &&
+        !res.destroyed
+      ) {
+
+        res.end();
+
+      }
+
+
+      // ------------------------------------------------------
+      // CLEANUP
+      // ------------------------------------------------------
+
+      if (
+        disconnectHandler
+      ) {
+
+        req.off(
+          "close",
+          disconnectHandler
+        );
+
+      }
+
+    } catch (error) {
+
+      clearTimeout(
+        timeoutId
+      );
+
+
+      console.error(
+        "[Chatbot] Unexpected controller error:",
+        error
+      );
+
+
+      // ------------------------------------------------------
+      // ABORT ERROR
+      // ------------------------------------------------------
+
+      if (
+        error.name ===
+        "AbortError"
+      ) {
+
+        if (
+          !res.headersSent &&
+          !clientDisconnected
+        ) {
+
+          return res
+            .status(504)
+            .json({
+
+              success: false,
+
+              message:
+                "The AI provider request timed out.",
+
+            });
+
+        }
+
+
+        if (
+          !res.destroyed
+        ) {
+
+          res.end();
+
+        }
+
+
+        return;
+      }
+
+
+      // ------------------------------------------------------
+      // ERROR BEFORE STREAM
+      // ------------------------------------------------------
+
+      if (
+        !res.headersSent
+      ) {
+
+        return res
+          .status(500)
+          .json({
+
+            success: false,
+
+            message:
+              "Something went wrong while communicating with the AI provider.",
+
+          });
+
+      }
+
+
+      // ------------------------------------------------------
+      // ERROR AFTER STREAM STARTED
+      // ------------------------------------------------------
 
       if (
         !res.destroyed
       ) {
+
         res.end();
+
       }
 
-      return;
     }
 
-    // --------------------------------------------------------
-    // Error before streaming
-    // --------------------------------------------------------
-
-    if (
-      !res.headersSent
-    ) {
-      return res.status(500).json({
-        success: false,
-
-        message:
-          "Something went wrong while communicating with the AI provider.",
-      });
-    }
-
-    // --------------------------------------------------------
-    // Error after streaming started
-    // --------------------------------------------------------
-
-    if (
-      !res.destroyed
-    ) {
-      res.end();
-    }
-  }
-};
+  };
