@@ -2,38 +2,27 @@
 //
 // Lightweight AI chatbot controller.
 //
-// Uses Node.js native fetch.
-// No OpenAI SDK.
-// No Gemini SDK.
-// No additional npm dependencies.
-//
-// Supported providers:
+// Providers:
 // - OpenAI
 // - Gemini
 //
+// No SDKs are required.
+// Uses Node.js native fetch.
+//
 // Environment variables:
 //
-// OPENAI_API_KEY=your_openai_key
+// OPENAI_API_KEY=your_openai_api_key
 // OPENAI_MODEL=gpt-4o-mini
 //
-// GEMINI_API_KEY=your_gemini_key
+// GEMINI_API_KEY=your_gemini_api_key
 //
-// Gemini model is intentionally fixed to:
-// gemini-2.5-flash
+// Optional:
+// CHATBOT_DEBUG=true
 //
-// The frontend sends:
+// CHATBOT_DEBUG=true temporarily exposes the provider's actual
+// error message in the API response. Keep it false in production.
 //
-// {
-//   provider: "openai" | "gemini",
-//   messages: [
-//     {
-//       role: "user" | "assistant",
-//       content: "Hello"
-//     }
-//   ]
-// }
-//
-// The backend returns a plain text streaming response.
+// ------------------------------------------------------------
 
 
 // ============================================================
@@ -45,6 +34,9 @@ const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 8000;
 
 const PROVIDER_TIMEOUT = 60_000;
+
+const DEBUG_ERRORS =
+  process.env.CHATBOT_DEBUG === "true";
 
 
 // ============================================================
@@ -70,22 +62,18 @@ const PROVIDERS = {
     buildRequest(messages) {
 
       return {
-
         url:
           "https://api.openai.com/v1/chat/completions",
 
         headers: {
-
           "Content-Type":
             "application/json",
 
           Authorization:
             `Bearer ${process.env.OPENAI_API_KEY}`,
-
         },
 
         body: {
-
           model:
             process.env.OPENAI_MODEL ||
             "gpt-4o-mini",
@@ -93,9 +81,7 @@ const PROVIDERS = {
           messages,
 
           stream: true,
-
         },
-
       };
     },
 
@@ -104,9 +90,7 @@ const PROVIDERS = {
       return (
         json
           ?.choices
-          ?.[
-            0
-          ]
+          ?.[0]
           ?.delta
           ?.content || ""
       );
@@ -116,7 +100,6 @@ const PROVIDERS = {
 
       return data === "[DONE]";
     },
-
   },
 
 
@@ -129,7 +112,6 @@ const PROVIDERS = {
     label: "Gemini",
 
     isConfigured() {
-
       return Boolean(
         process.env.GEMINI_API_KEY
       );
@@ -137,44 +119,52 @@ const PROVIDERS = {
 
     buildRequest(messages) {
 
-      // Gemini uses:
+      // OpenAI-style:
       //
-      // user
-      // model
+      // {
+      //   role: "assistant",
+      //   content: "Hello"
+      // }
       //
-      // instead of:
+      // Gemini-style:
       //
-      // user
-      // assistant
+      // {
+      //   role: "model",
+      //   parts: [
+      //     {
+      //       text: "Hello"
+      //     }
+      //   ]
+      // }
 
       const contents =
-        messages.map(
-          (message) => ({
+        messages.map((message) => ({
+          role:
+            message.role === "assistant"
+              ? "model"
+              : "user",
 
-            role:
-              message.role ===
-              "assistant"
-                ? "model"
-                : "user",
-
-            parts: [
-
-              {
-                text:
-                  message.content,
-              },
-
-            ],
-
-          })
-        );
+          parts: [
+            {
+              text:
+                message.content,
+            },
+          ],
+        }));
 
 
       return {
 
+        // Gemini REST streaming endpoint.
+        //
         // IMPORTANT:
-        // Keep this model fixed to a valid
-        // current Gemini model.
+        // The model name must NOT contain "models/" here.
+        //
+        // Correct:
+        // models/gemini-2.5-flash:streamGenerateContent
+        //
+        // Incorrect:
+        // models/models/gemini-2.5-flash
 
         url:
           "https://generativelanguage.googleapis.com/" +
@@ -188,15 +178,11 @@ const PROVIDERS = {
 
           "x-goog-api-key":
             process.env.GEMINI_API_KEY,
-
         },
 
         body: {
-
           contents,
-
         },
-
       };
     },
 
@@ -204,12 +190,9 @@ const PROVIDERS = {
     extractText(json) {
 
       return (
-
         json
           ?.candidates
-          ?.[
-            0
-          ]
+          ?.[0]
           ?.content
           ?.parts
           ?.map(
@@ -217,26 +200,25 @@ const PROVIDERS = {
               part?.text || ""
           )
           ?.join("") || ""
-
       );
     },
 
 
     isDone() {
 
-      // Gemini closes the HTTP stream
-      // instead of sending [DONE].
+      // Gemini ends the HTTP stream.
+      // It does not use OpenAI's [DONE]
+      // sentinel.
 
       return false;
     },
-
   },
 
 };
 
 
 // ============================================================
-// MESSAGE VALIDATION
+// VALIDATE MESSAGES
 // ============================================================
 
 function validateMessages(messages) {
@@ -244,12 +226,9 @@ function validateMessages(messages) {
   if (!Array.isArray(messages)) {
 
     return {
-
       valid: false,
-
       message:
         "Messages must be an array.",
-
     };
   }
 
@@ -257,12 +236,9 @@ function validateMessages(messages) {
   if (messages.length === 0) {
 
     return {
-
       valid: false,
-
       message:
         "Messages array cannot be empty.",
-
     };
   }
 
@@ -273,31 +249,26 @@ function validateMessages(messages) {
   ) {
 
     return {
-
       valid: false,
-
       message:
         `Maximum ${MAX_MESSAGES} messages are allowed.`,
-
     };
   }
 
 
-  for (const message of messages) {
+  for (
+    const message of messages
+  ) {
 
     if (
       !message ||
-      typeof message !==
-        "object"
+      typeof message !== "object"
     ) {
 
       return {
-
         valid: false,
-
         message:
           "Invalid message format.",
-
       };
     }
 
@@ -312,12 +283,9 @@ function validateMessages(messages) {
     ) {
 
       return {
-
         valid: false,
-
         message:
           'Message role must be "user" or "assistant".',
-
       };
     }
 
@@ -328,12 +296,9 @@ function validateMessages(messages) {
     ) {
 
       return {
-
         valid: false,
-
         message:
           "Message content must be a string.",
-
       };
     }
 
@@ -343,12 +308,9 @@ function validateMessages(messages) {
     ) {
 
       return {
-
         valid: false,
-
         message:
           "Message content cannot be empty.",
-
       };
     }
 
@@ -359,15 +321,11 @@ function validateMessages(messages) {
     ) {
 
       return {
-
         valid: false,
-
         message:
           `Message cannot exceed ${MAX_MESSAGE_LENGTH} characters.`,
-
       };
     }
-
   }
 
 
@@ -378,18 +336,78 @@ function validateMessages(messages) {
     messages:
       messages.map(
         (message) => ({
-
           role:
             message.role,
 
           content:
             message.content.trim(),
-
         })
       ),
-
   };
+}
 
+
+// ============================================================
+// PARSE PROVIDER ERROR
+// ============================================================
+
+async function parseProviderError(
+  providerResponse
+) {
+
+  const rawText =
+    await providerResponse
+      .text()
+      .catch(() => "");
+
+
+  let message =
+    "Unknown provider error.";
+
+
+  let parsed = null;
+
+
+  try {
+
+    parsed =
+      JSON.parse(
+        rawText
+      );
+
+  } catch {
+    // Response wasn't JSON.
+  }
+
+
+  if (parsed) {
+
+    message =
+      parsed?.error?.message ||
+      parsed?.message ||
+      message;
+
+  } else if (
+    rawText
+  ) {
+
+    message =
+      rawText;
+
+  }
+
+
+  return {
+    status:
+      providerResponse.status,
+
+    statusText:
+      providerResponse.statusText,
+
+    message,
+
+    rawText,
+  };
 }
 
 
@@ -441,11 +459,9 @@ async function streamProviderResponse({
       ) {
 
         try {
-
           await reader.cancel();
-
         } catch {
-          // Ignore cancellation errors.
+          // Ignore.
         }
 
         return;
@@ -460,7 +476,6 @@ async function streamProviderResponse({
 
 
       if (done) {
-
         break;
       }
 
@@ -474,8 +489,13 @@ async function streamProviderResponse({
         );
 
 
-      // SSE events are separated
-      // by a blank line.
+      // SSE messages can use:
+      //
+      // \n\n
+      //
+      // or:
+      //
+      // \r\n\r\n
 
       const events =
         buffer.split(
@@ -483,19 +503,18 @@ async function streamProviderResponse({
         );
 
 
-      // Keep the incomplete
-      // event for the next chunk.
+      // Keep incomplete event.
 
       buffer =
         events.pop() || "";
 
 
       for (
-        const event of events
+        const rawEvent of events
       ) {
 
         const lines =
-          event.split(
+          rawEvent.split(
             /\r?\n/
           );
 
@@ -517,10 +536,8 @@ async function streamProviderResponse({
 
 
         if (
-          dataLines.length ===
-          0
+          dataLines.length === 0
         ) {
-
           continue;
         }
 
@@ -531,13 +548,12 @@ async function streamProviderResponse({
           );
 
 
-        // ----------------------------------------------------
-        // OPENAI END OF STREAM
-        // ----------------------------------------------------
+        // ====================================================
+        // OPENAI END
+        // ====================================================
 
         if (
-          provider ===
-            "openai" &&
+          provider === "openai" &&
           data === "[DONE]"
         ) {
 
@@ -545,9 +561,99 @@ async function streamProviderResponse({
         }
 
 
-        // ----------------------------------------------------
+        // ====================================================
         // PARSE JSON
-        // ----------------------------------------------------
+        // ====================================================
+
+        let json;
+
+
+        try {
+
+          json =
+            JSON.parse(data);
+
+        } catch (error) {
+
+          console.warn(
+            `[Chatbot] Could not parse ${provider} SSE chunk:`,
+            error.message
+          );
+
+          continue;
+        }
+
+
+        // ====================================================
+        // EXTRACT TEXT
+        // ====================================================
+
+        const config =
+          PROVIDERS[provider];
+
+
+        const text =
+          config.extractText(
+            json
+          );
+
+
+        // ====================================================
+        // SEND TO FRONTEND
+        // ====================================================
+
+        if (
+          text &&
+          !res.destroyed
+        ) {
+
+          res.write(text);
+        }
+      }
+    }
+
+
+    // ========================================================
+    // PROCESS ANY FINAL BUFFER
+    // ========================================================
+
+    if (
+      buffer.trim()
+    ) {
+
+      const lines =
+        buffer.split(
+          /\r?\n/
+        );
+
+
+      const dataLines =
+        lines
+          .filter(
+            (line) =>
+              line.startsWith(
+                "data:"
+              )
+          )
+          .map(
+            (line) =>
+              line
+                .slice(5)
+                .trim()
+          );
+
+
+      for (
+        const data of dataLines
+      ) {
+
+        if (
+          provider === "openai" &&
+          data === "[DONE]"
+        ) {
+          continue;
+        }
+
 
         try {
 
@@ -555,62 +661,13 @@ async function streamProviderResponse({
             JSON.parse(data);
 
 
-          let text = "";
-
-
-          // --------------------------------------------------
-          // OPENAI
-          // --------------------------------------------------
-
-          if (
-            provider ===
-            "openai"
-          ) {
-
-            text =
+          const text =
+            PROVIDERS[
+              provider
+            ].extractText(
               json
-                ?.choices
-                ?.[
-                  0
-                ]
-                ?.delta
-                ?.content ||
-              "";
+            );
 
-          }
-
-
-          // --------------------------------------------------
-          // GEMINI
-          // --------------------------------------------------
-
-          if (
-            provider ===
-            "gemini"
-          ) {
-
-            text =
-              json
-                ?.candidates
-                ?.[
-                  0
-                ]
-                ?.content
-                ?.parts
-                ?.map(
-                  (part) =>
-                    part?.text ||
-                    ""
-                )
-                ?.join("") ||
-              "";
-
-          }
-
-
-          // --------------------------------------------------
-          // SEND CHUNK TO FRONTEND
-          // --------------------------------------------------
 
           if (
             text &&
@@ -618,34 +675,22 @@ async function streamProviderResponse({
           ) {
 
             res.write(text);
-
           }
 
-        } catch (error) {
-
-          console.warn(
-            `[Chatbot] Failed to parse ${provider} SSE chunk:`,
-            error.message
-          );
-
+        } catch {
+          // Ignore incomplete final data.
         }
-
       }
-
     }
 
   } finally {
 
     try {
-
       reader.releaseLock();
-
     } catch {
       // Ignore.
     }
-
   }
-
 }
 
 
@@ -655,45 +700,37 @@ async function streamProviderResponse({
 //
 // GET /api/v1/chatbot/providers
 //
-// Returns only providers that have an API key configured.
+// Returns configured providers only.
 //
 
-export const getAvailableProviders = (
-  req,
-  res
-) => {
+export const getAvailableProviders =
+  (req, res) => {
 
-  const providers =
-    Object.entries(
-      PROVIDERS
-    )
-
-      .filter(
-        ([, config]) =>
-          config.isConfigured()
+    const providers =
+      Object.entries(
+        PROVIDERS
       )
+        .filter(
+          ([, config]) =>
+            config.isConfigured()
+        )
+        .map(
+          ([id, config]) => ({
+            id,
+            label:
+              config.label,
+          })
+        );
 
-      .map(
-        ([id, config]) => ({
 
-          id,
+    return res.status(200).json({
 
-          label:
-            config.label,
+      success: true,
 
-        })
-      );
+      providers,
 
-
-  return res.status(200).json({
-
-    success: true,
-
-    providers,
-
-  });
-
-};
+    });
+  };
 
 
 // ============================================================
@@ -705,58 +742,48 @@ export const getAvailableProviders = (
 // Body:
 //
 // {
-//   provider: "gemini",
-//   messages: [
+//   "provider": "gemini",
+//   "messages": [
 //     {
-//       role: "user",
-//       content: "Hello"
+//       "role": "user",
+//       "content": "Hello"
 //     }
 //   ]
 // }
 //
-// Response:
-//
-// Plain text stream
-//
 
 export const sendChatMessage =
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
 
-    let timeoutId;
-
-    const abortController =
-      new AbortController();
-
+    let timeoutId = null;
 
     let clientDisconnected =
       false;
 
 
-    let disconnectHandler;
+    const abortController =
+      new AbortController();
+
+
+    let disconnectHandler = null;
 
 
     try {
 
-      // ------------------------------------------------------
-      // REQUEST DATA
-      // ------------------------------------------------------
+      // ======================================================
+      // REQUEST BODY
+      // ======================================================
 
       const {
-
         provider,
-
         messages,
-
       } =
         req.body || {};
 
 
-      // ------------------------------------------------------
-      // VALIDATE PROVIDER
-      // ------------------------------------------------------
+      // ======================================================
+      // PROVIDER VALIDATION
+      // ======================================================
 
       if (
         typeof provider !==
@@ -775,7 +802,6 @@ export const sendChatMessage =
             ).join(", ")}`,
 
         });
-
       }
 
 
@@ -783,9 +809,9 @@ export const sendChatMessage =
         PROVIDERS[provider];
 
 
-      // ------------------------------------------------------
-      // CHECK API KEY
-      // ------------------------------------------------------
+      // ======================================================
+      // API KEY VALIDATION
+      // ======================================================
 
       if (
         !config.isConfigured()
@@ -804,13 +830,12 @@ export const sendChatMessage =
             `${config.label} is not configured on the server.`,
 
         });
-
       }
 
 
-      // ------------------------------------------------------
-      // VALIDATE MESSAGES
-      // ------------------------------------------------------
+      // ======================================================
+      // MESSAGE VALIDATION
+      // ======================================================
 
       const validation =
         validateMessages(
@@ -830,36 +855,38 @@ export const sendChatMessage =
             validation.message,
 
         });
-
       }
 
 
-      // ------------------------------------------------------
-      // BUILD PROVIDER REQUEST
-      // ------------------------------------------------------
+      // ======================================================
+      // BUILD REQUEST
+      // ======================================================
 
       const {
-
         url,
-
         headers,
-
         body,
-
       } =
         config.buildRequest(
           validation.messages
         );
 
 
+      // IMPORTANT:
+      // Never log the URL for Gemini because
+      // we don't put the API key in the URL.
+      //
+      // Also never log headers because they
+      // contain authentication credentials.
+
       console.log(
-        `[Chatbot] Sending request to ${provider}`
+        `[Chatbot] Requesting ${config.label}...`
       );
 
 
-      // ------------------------------------------------------
-      // TIMEOUT
-      // ------------------------------------------------------
+      // ======================================================
+      // PROVIDER TIMEOUT
+      // ======================================================
 
       timeoutId =
         setTimeout(
@@ -872,9 +899,9 @@ export const sendChatMessage =
         );
 
 
-      // ------------------------------------------------------
+      // ======================================================
       // CLIENT DISCONNECT
-      // ------------------------------------------------------
+      // ======================================================
 
       disconnectHandler =
         () => {
@@ -890,21 +917,19 @@ export const sendChatMessage =
           ) {
 
             abortController.abort();
-
           }
-
         };
 
 
-      req.on(
+      req.once(
         "close",
         disconnectHandler
       );
 
 
-      // ------------------------------------------------------
-      // CALL AI PROVIDER
-      // ------------------------------------------------------
+      // ======================================================
+      // CALL PROVIDER
+      // ======================================================
 
       let providerResponse;
 
@@ -955,15 +980,14 @@ export const sendChatMessage =
               success: false,
 
               message:
-                "The AI provider took too long to respond.",
+                `The ${config.label} request timed out.`,
 
             });
-
         }
 
 
         console.error(
-          `[Chatbot] ${provider} network error:`,
+          `[Chatbot] ${config.label} connection error:`,
           error
         );
 
@@ -985,55 +1009,62 @@ export const sendChatMessage =
           timeoutId
         );
 
+        timeoutId = null;
       }
 
 
-      // ------------------------------------------------------
-      // PROVIDER ERROR
-      // ------------------------------------------------------
+      // ======================================================
+      // PROVIDER HTTP ERROR
+      // ======================================================
 
       if (
         !providerResponse.ok
       ) {
 
-        const errorText =
-          await providerResponse
-            .text()
-            .catch(
-              () => ""
-            );
+        const providerError =
+          await parseProviderError(
+            providerResponse
+          );
 
+
+        // IMPORTANT:
+        // This is the information we need
+        // to diagnose your current 404.
+
+        console.error(
+          "=================================================="
+        );
+
+        console.error(
+          `[Chatbot] ${config.label} provider error`
+        );
+
+        console.error(
+          "Status:",
+          providerError.status
+        );
+
+        console.error(
+          "Status text:",
+          providerError.statusText
+        );
+
+        console.error(
+          "Provider message:",
+          providerError.message
+        );
 
         console.error(
           "=================================================="
         );
 
 
-        console.error(
-          `[Chatbot] ${provider} request failed`
-        );
-
-
-        console.error(
-          `Status: ${providerResponse.status}`
-        );
-
-
-        // This is the MOST IMPORTANT
-        // debug information.
-
-        console.error(
-          `Response: ${errorText}`
-        );
-
-
-        console.error(
-          "=================================================="
-        );
-
+        // ----------------------------------------------------
+        // DEVELOPMENT / DEBUG RESPONSE
+        // ----------------------------------------------------
 
         if (
-          !res.headersSent
+          DEBUG_ERRORS
         ) {
 
           return res
@@ -1043,31 +1074,45 @@ export const sendChatMessage =
               success: false,
 
               message:
-                `The ${config.label} provider returned an error. Please try again.`,
+                `The ${config.label} provider returned an error.`,
 
               providerStatus:
-                providerResponse
-                  .status,
+                providerError.status,
+
+              providerMessage:
+                providerError.message,
 
             });
-
         }
 
 
-        return;
+        // ----------------------------------------------------
+        // PRODUCTION RESPONSE
+        // ----------------------------------------------------
+
+        return res
+          .status(502)
+          .json({
+
+            success: false,
+
+            message:
+              `The ${config.label} provider returned an error. Please try again.`,
+
+          });
       }
 
 
-      // ------------------------------------------------------
-      // CHECK RESPONSE BODY
-      // ------------------------------------------------------
+      // ======================================================
+      // CHECK PROVIDER BODY
+      // ======================================================
 
       if (
         !providerResponse.body
       ) {
 
         console.error(
-          `[Chatbot] ${provider} returned no response body.`
+          `[Chatbot] ${config.label} returned an empty response body.`
         );
 
 
@@ -1081,13 +1126,12 @@ export const sendChatMessage =
               `${config.label} returned an empty response.`,
 
           });
-
       }
 
 
-      // ------------------------------------------------------
-      // START STREAM
-      // ------------------------------------------------------
+      // ======================================================
+      // STREAM RESPONSE HEADERS
+      // ======================================================
 
       res.writeHead(
         200,
@@ -1112,9 +1156,9 @@ export const sendChatMessage =
       );
 
 
-      // ------------------------------------------------------
-      // STREAM RESPONSE
-      // ------------------------------------------------------
+      // ======================================================
+      // STREAM AI RESPONSE
+      // ======================================================
 
       await streamProviderResponse({
 
@@ -1125,15 +1169,14 @@ export const sendChatMessage =
         res,
 
         signal:
-          abortController
-            .signal,
+          abortController.signal,
 
       });
 
 
-      // ------------------------------------------------------
-      // END RESPONSE
-      // ------------------------------------------------------
+      // ======================================================
+      // FINISH RESPONSE
+      // ======================================================
 
       if (
         !clientDisconnected &&
@@ -1141,24 +1184,8 @@ export const sendChatMessage =
       ) {
 
         res.end();
-
       }
 
-
-      // ------------------------------------------------------
-      // CLEANUP
-      // ------------------------------------------------------
-
-      if (
-        disconnectHandler
-      ) {
-
-        req.off(
-          "close",
-          disconnectHandler
-        );
-
-      }
 
     } catch (error) {
 
@@ -1168,14 +1195,14 @@ export const sendChatMessage =
 
 
       console.error(
-        "[Chatbot] Unexpected controller error:",
+        "[Chatbot] Unexpected error:",
         error
       );
 
 
-      // ------------------------------------------------------
+      // ======================================================
       // ABORT ERROR
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         error.name ===
@@ -1197,7 +1224,6 @@ export const sendChatMessage =
                 "The AI provider request timed out.",
 
             });
-
         }
 
 
@@ -1206,7 +1232,6 @@ export const sendChatMessage =
         ) {
 
           res.end();
-
         }
 
 
@@ -1214,9 +1239,9 @@ export const sendChatMessage =
       }
 
 
-      // ------------------------------------------------------
+      // ======================================================
       // ERROR BEFORE STREAM
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         !res.headersSent
@@ -1232,22 +1257,42 @@ export const sendChatMessage =
               "Something went wrong while communicating with the AI provider.",
 
           });
-
       }
 
 
-      // ------------------------------------------------------
+      // ======================================================
       // ERROR AFTER STREAM STARTED
-      // ------------------------------------------------------
+      // ======================================================
 
       if (
         !res.destroyed
       ) {
 
         res.end();
-
       }
 
-    }
+    } finally {
 
+      // ======================================================
+      // CLEANUP
+      // ======================================================
+
+      if (timeoutId) {
+
+        clearTimeout(
+          timeoutId
+        );
+      }
+
+
+      if (
+        disconnectHandler
+      ) {
+
+        req.off(
+          "close",
+          disconnectHandler
+        );
+      }
+    }
   };
