@@ -28,6 +28,7 @@ const allowedOrigins = [
   process.env.FRONTEND_URI, 
   "http://localhost:8080",
   "http://localhost:3000",
+  "https://m-mateen.netlify.app",
 ];
 
 const app = express();

@@ -1,27 +1,53 @@
 import mongoose from "mongoose";
 import Progress from "../../models/progress.model.js";
 import Course from "../../models/courses.model.js";
+import Quiz from "../../models/quiz.model.js"; 
 import { emitToUser } from "../../service/SocketService.js";
 import { notifyProgressUpdated, notifyQuizAttempted, notifyCourseCompleted } from "../../service/adminEvents.js";
+
+// A quiz counts as "complete" toward course progress once scored at/above this.
+// Keep in sync with PASS_THRESHOLD in QuizPage.jsx.
+const QUIZ_PASS_THRESHOLD = 70;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Recalculates overallProgress + completed flag on a progress doc, based on
- * how many lectures are watched vs. total lectures on the course.
- * Mutates the doc in place. Does NOT save — caller is responsible for that.
+ * Looks up everything needed to compute progress totals for a course:
+ * the course doc (for title + lecture count) and how many quizzes exist
+ * for it. Single place both handlers pull from, so lecture-watching and
+ * quiz-submitting can never drift into different formulas.
+ */
+async function getCourseTotals(courseId) {
+  const [course, totalQuizzes] = await Promise.all([
+    Course.findById(courseId).select("title lectures"),
+    // ⚠️ Assumes the Quiz model has a `courseId` field, matching how the
+    // frontend fetches quizzes via /quizzes/course/:courseId. Adjust the
+    // field name here if your Quiz schema calls it something else (e.g. `course`).
+    Quiz.countDocuments({ courseId }),
+  ]);
+  return { course, totalLectures: course?.lectures?.length || 0, totalQuizzes };
+}
+
+/**
+ * Recalculates overallProgress + completed, treating every lecture and
+ * every quiz on the course as one equal-weight "item":
+ *   overallProgress = (watchedLectures + passedQuizzes) / (totalLectures + totalQuizzes)
+ * A lecture counts once watched (30% threshold, enforced client-side).
+ * A quiz counts once scored >= QUIZ_PASS_THRESHOLD.
+ * Mutates the doc in place. Does NOT save — caller saves.
  * Returns true if this call is what just pushed the course to 100%.
  */
-function recalcOverallProgress(progressDoc, course) {
-  const totalLectures = course?.lectures?.length || 0;
-  const watchedCount = progressDoc.lectures.filter((l) => l.watched).length;
+function recalcOverallProgress(progressDoc, totalLectures, totalQuizzes) {
+  const watchedLectures = progressDoc.lectures.filter((l) => l.watched).length;
+  const passedQuizzes = progressDoc.quizzes.filter((q) => q.score >= QUIZ_PASS_THRESHOLD).length;
+
+  const totalItems = totalLectures + totalQuizzes;
+  const completedItems = watchedLectures + passedQuizzes;
 
   const wasCompleted = progressDoc.completed;
 
-  progressDoc.overallProgress =
-    totalLectures > 0 ? Math.min(100, Math.round((watchedCount / totalLectures) * 100)) : 0;
-
-  progressDoc.completed = totalLectures > 0 && watchedCount >= totalLectures;
+  progressDoc.overallProgress = totalItems > 0 ? Math.min(100, Math.round((completedItems / totalItems) * 100)) : 0;
+  progressDoc.completed = totalItems > 0 && completedItems >= totalItems;
 
   return !wasCompleted && progressDoc.completed;
 }
@@ -55,7 +81,6 @@ export const getMyProgress = async (req, res) => {
       .populate("quizzes.quizId", "title");
 
     if (!progress) {
-      // Not an error — user just hasn't started this course yet.
       return res.status(200).json({
         success: true,
         progress: {
@@ -77,7 +102,6 @@ export const getMyProgress = async (req, res) => {
 };
 
 // GET /api/progress
-// All of the logged-in user's progress records, across every course.
 export const getMyAllProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -94,7 +118,6 @@ export const getMyAllProgress = async (req, res) => {
 };
 
 // PATCH /api/progress/:courseId/lecture
-// Body: { lectureId, watched, lastPosition }
 export const updateLectureProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -105,12 +128,11 @@ export const updateLectureProgress = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid course or lecture id" });
     }
 
-    const course = await Course.findById(courseId).select("title lectures");
+    const { course, totalLectures, totalQuizzes } = await getCourseTotals(courseId);
     if (!course) {
       return res.status(404).json({ success: false, message: "Course not found" });
     }
 
-    // Reject lectures that don't actually belong to this course.
     const belongsToCourse = course.lectures.some((id) => String(id) === String(lectureId));
     if (!belongsToCourse) {
       return res.status(400).json({ success: false, message: "This lecture does not belong to the given course" });
@@ -133,11 +155,9 @@ export const updateLectureProgress = async (req, res) => {
       });
     }
 
-    const justCompleted = recalcOverallProgress(progress, course);
+    const justCompleted = recalcOverallProgress(progress, totalLectures, totalQuizzes);
     await progress.save();
 
-    // ── Real-time: push the update to the user's own sockets (multi-device
-    // sync) and to the admin dashboard (live "who's watching what").
     emitToUser(userId, "progress:lectureUpdated", {
       courseId,
       lectureId,
@@ -167,7 +187,6 @@ export const updateLectureProgress = async (req, res) => {
 };
 
 // POST /api/progress/:courseId/quiz
-// Body: { quizId, score, totalQuestions, correctAnswers, answers }
 export const submitQuizAttempt = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -182,7 +201,7 @@ export const submitQuizAttempt = async (req, res) => {
       return res.status(400).json({ success: false, message: "A valid non-negative score is required" });
     }
 
-    const course = await Course.findById(courseId).select("title");
+    const { course, totalLectures, totalQuizzes } = await getCourseTotals(courseId);
     if (!course) {
       return res.status(404).json({ success: false, message: "Course not found" });
     }
@@ -198,7 +217,6 @@ export const submitQuizAttempt = async (req, res) => {
       attemptedAt: new Date(),
     };
 
-    // Upsert: one entry per quiz — a retake overwrites the previous score.
     const existingIndex = progress.quizzes.findIndex((q) => String(q.quizId) === String(quizId));
     if (existingIndex !== -1) {
       progress.quizzes[existingIndex] = attemptData;
@@ -206,6 +224,10 @@ export const submitQuizAttempt = async (req, res) => {
       progress.quizzes.push(attemptData);
     }
 
+    // Quizzes now count toward overallProgress too — same formula, same
+    // helper, as lecture watching. This is the fix: previously only the
+    // lecture endpoint ever recalculated overallProgress.
+    const justCompleted = recalcOverallProgress(progress, totalLectures, totalQuizzes);
     await progress.save();
 
     emitToUser(userId, "progress:quizAttempted", {
@@ -214,6 +236,7 @@ export const submitQuizAttempt = async (req, res) => {
       score,
       totalQuestions,
       correctAnswers,
+      overallProgress: progress.overallProgress,
     });
 
     notifyQuizAttempted({
@@ -225,6 +248,11 @@ export const submitQuizAttempt = async (req, res) => {
       totalQuestions,
       correctAnswers,
     });
+
+    if (justCompleted) {
+      emitToUser(userId, "course:completed", { courseId, courseTitle: course.title });
+      notifyCourseCompleted({ userId, userEmail: req.user.email, courseId, courseTitle: course.title });
+    }
 
     return res.status(200).json({ success: true, progress });
   } catch (error) {
