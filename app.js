@@ -19,6 +19,7 @@ import verifyAuth from './Middlewares/AuthMiddleware.js';
 import certificateRouter from './routes/certificate.route.js';
 import paymentRoutes from './routes/payment.route.js';
 import { stripeWebhook } from './Controllers/Payment/payment.controller.js';
+import chatbotRouter from './routes/chatbot.route.js';
 
 
 environment.config(); 
@@ -70,6 +71,7 @@ app.use("/api/v1/messages",verifyAuth, messageRouter)
 app.use("/api/v1/admin",verifyAuth,adminRoutes);
 app.use("/api/v1/certificates",verifyAuth,certificateRouter)
 app.use("/api/v1/payments",verifyAuth,paymentRoutes);
+app.use("/api/v1/chatbot",verifyAuth,chatbotRouter);
 
 const PORT = process.env.PORT || 8080;
 
