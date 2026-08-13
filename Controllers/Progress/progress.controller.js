@@ -1,91 +1,12 @@
 import mongoose from "mongoose";
 import Progress from "../../models/progress.model.js";
-import Course from "../../models/courses.model.js";
-import Quiz from "../../models/quiz.model.js";
 import { emitToUser } from "../../service/SocketService.js";
 import { notifyProgressUpdated, notifyQuizAttempted, notifyCourseCompleted } from "../../service/adminEvents.js";
-
-// A quiz counts as "passed" toward course progress once scored at/above this.
-// Keep in sync with PASS_THRESHOLD in QuizPage.jsx.
-const QUIZ_PASS_THRESHOLD = 70;
-
-// Fixed weighting: lecture-watching drives most of the bar, quizzes make up
-// the rest — regardless of how many lectures vs. quizzes a course has.
-const LECTURE_WEIGHT = 0.6;
-const QUIZ_WEIGHT = 0.4;
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Looks up everything needed to compute progress totals for a course:
- * the course doc (for title + lecture count) and how many quizzes exist
- * for it. Single place both handlers pull from, so lecture-watching and
- * quiz-submitting can never drift into different formulas.
- */
-async function getCourseTotals(courseId) {
-  const [course, totalQuizzes] = await Promise.all([
-    Course.findById(courseId).select("title lectures"),
-    Quiz.countDocuments({ courseId }),
-  ]);
-  return { course, totalLectures: course?.lectures?.length || 0, totalQuizzes };
-}
-
-/**
- * Recalculates overallProgress + completed using a fixed weighted split:
- *   60% of the bar comes from lecture-watch ratio (watchedLectures/totalLectures)
- *   40% of the bar comes from quiz-pass ratio (passedQuizzes/totalQuizzes)
- * If a course has no lectures, or no quizzes, all weight shifts to whichever
- * dimension actually exists so the bar can still reach 100%.
- * Mutates the doc in place. Does NOT save — caller saves.
- * Returns true if this call is what just pushed the course to 100%.
- */
-function recalcOverallProgress(progressDoc, totalLectures, totalQuizzes) {
-  const watchedLectures = progressDoc.lectures.filter((l) => l.watched).length;
-  const passedQuizzes = progressDoc.quizzes.filter((q) => q.score >= QUIZ_PASS_THRESHOLD).length;
-
-  const lectureRatio = totalLectures > 0 ? watchedLectures / totalLectures : null;
-  const quizRatio = totalQuizzes > 0 ? passedQuizzes / totalQuizzes : null;
-
-  let percent;
-  if (lectureRatio !== null && quizRatio !== null) {
-    percent = lectureRatio * LECTURE_WEIGHT * 100 + quizRatio * QUIZ_WEIGHT * 100;
-  } else if (lectureRatio !== null) {
-    percent = lectureRatio * 100; // course has no quizzes — lectures are 100% of the bar
-  } else if (quizRatio !== null) {
-    percent = quizRatio * 100; // course has no lectures — quizzes are 100% of the bar
-  } else {
-    percent = 0; // course has neither yet
-  }
-
-  const wasCompleted = progressDoc.completed;
-
-  progressDoc.overallProgress = Math.min(100, Math.round(percent));
-
-  // "Completed" requires every dimension that actually exists on this
-  // course to be fully done — not just the weighted percentage hitting 100
-  // (which it can't anyway unless both are done, but this is explicit).
-  const lectureDone = lectureRatio === null || lectureRatio >= 1;
-  const quizDone = quizRatio === null || quizRatio >= 1;
-  progressDoc.completed = (lectureRatio !== null || quizRatio !== null) && lectureDone && quizDone;
-
-  return !wasCompleted && progressDoc.completed;
-}
-
-/**
- * Finds a user's progress doc for a course, creating an empty one if it
- * doesn't exist yet. Keeps the unique (userId, courseId) index happy.
- */
-async function getOrCreateProgress(userId, courseId) {
-  let progress = await Progress.findOne({ userId, courseId });
-  if (!progress) {
-    progress = await Progress.create({ userId, courseId, lectures: [], quizzes: [] });
-  }
-  return progress;
-}
+import { getCourseTotals, recalcOverallProgress, getOrCreateProgress } from "../../utils/Progresscalculator.js";
 
 // ── Controllers ─────────────────────────────────────────────────────────
 
-// GET /api/progress/:courseId
+// GET /api/v1/progress/:courseId
 export const getMyProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -120,7 +41,7 @@ export const getMyProgress = async (req, res) => {
   }
 };
 
-// GET /api/progress
+// GET /api/v1/progress
 export const getMyAllProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -136,7 +57,7 @@ export const getMyAllProgress = async (req, res) => {
   }
 };
 
-// PATCH /api/progress/:courseId/lecture
+// PATCH /api/v1/progress/:courseId/lecture
 export const updateLectureProgress = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -157,7 +78,7 @@ export const updateLectureProgress = async (req, res) => {
       return res.status(400).json({ success: false, message: "This lecture does not belong to the given course" });
     }
 
-    const progress = await getOrCreateProgress(userId, courseId);
+    const progress = await getOrCreateProgress(Progress, userId, courseId);
 
     const existingLecture = progress.lectures.find((l) => String(l.lectureId) === String(lectureId));
 
@@ -205,7 +126,7 @@ export const updateLectureProgress = async (req, res) => {
   }
 };
 
-// POST /api/progress/:courseId/quiz
+// POST /api/v1/progress/:courseId/quiz
 export const submitQuizAttempt = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -225,7 +146,7 @@ export const submitQuizAttempt = async (req, res) => {
       return res.status(404).json({ success: false, message: "Course not found" });
     }
 
-    const progress = await getOrCreateProgress(userId, courseId);
+    const progress = await getOrCreateProgress(Progress, userId, courseId);
 
     const attemptData = {
       quizId,
