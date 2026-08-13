@@ -1,13 +1,11 @@
 import mongoose from "mongoose";
 import Certificate from "../../models/certificate.model.js";
-import { uploadDocument, deleteDocument } from "../../utils/pdfSendToCloudinary.js";
-import User from "../../models/user.model.js"; 
-import Course from "../../models/courses.model.js"; 
-import { buildCertificateHtml } from "../../utils/certificateTemplate.js";
-import { generateCertificatePdf } from "../../utils/generateCertificatePdf.js";
-
-
-
+import Progress from "../../models/progress.model.js";
+import { deleteDocument } from "../../utils/pdfSendToCloudinary.js";
+import {
+  issueCertificateForStudentCourse,
+  CERTIFICATE_ELIGIBILITY_THRESHOLD,
+} from "../../utils/certificateService.js";
 
 const MAX_LIMIT = 50;
 
@@ -38,11 +36,7 @@ const getPagination = (query) => {
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-// ─── ISSUE CERTIFICATE ──────────────────────────────────────
-
-// ... (keep handleControllerError, getPagination, isValidObjectId as before)
-
-// ─── ISSUE CERTIFICATE (auto-generated, no file upload) ──────
+// ─── ISSUE CERTIFICATE (admin/instructor manual issuance) ────
 export const issueCertificate = async (req, res) => {
   try {
     const { studentId, courseId, instructorId, grade } = req.body;
@@ -57,62 +51,119 @@ export const issueCertificate = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid instructorId format." });
     }
 
-    // Fetch real data to embed in the certificate — never trust client-sent names
-    const [student, course, instructor] = await Promise.all([
-      User.findById(studentId).select("username email"),
-      Course.findById(courseId).select("title"),
-      instructorId ? User.findById(instructorId).select("username") : null,
-    ]);
-
-    if (!student) {
-      return res.status(404).json({ success: false, message: "Student not found." });
-    }
-    if (!course) {
-      return res.status(404).json({ success: false, message: "Course not found." });
-    }
-
-    const certificateNumber = Certificate.generateCertificateNumber();
-    const issuedAt = new Date();
-
-    const html = buildCertificateHtml({
-      studentName: student.username,
-      courseName: course.title,
-      instructorName: instructor?.username,
-      certificateNumber,
-      issuedAt,
+    const { certificate, created } = await issueCertificateForStudentCourse({
+      studentId,
+      courseId,
+      instructorId,
       grade,
     });
 
-    const pdfBuffer = await generateCertificatePdf(html);
-
-    const uploaded = await uploadDocument(pdfBuffer, {
-      folder: "LMS Certificates",
-    });
-
-    const newCertificate = await Certificate.create({
-      studentId,
-      courseId,
-      instructorId: instructorId || null,
-      certificateNumber,
-      grade: grade || null,
-      issuedAt,
-      document: {
-        url: uploaded.url,
-        publicId: uploaded.publicId,
-      },
-    });
-
-    return res.status(201).json({
+    return res.status(created ? 201 : 200).json({
       success: true,
-      message: "Certificate generated and issued successfully.",
-      certificate: newCertificate,
+      message: created
+        ? "Certificate generated and issued successfully."
+        : "Certificate already existed for this student and course.",
+      certificate,
     });
   } catch (error) {
     return handleControllerError(res, error);
   }
 };
 
-// ─── GET ALL CERTIFICATES ───────────────────────────────────
+// ─── MY COURSES + CERTIFICATE STATUS (student, self) ─────────
+// GET /api/v1/certificates/my-courses
+// Merges this student's Progress (with populated course title/thumbnail)
+// with any Certificate already issued for each course, so the frontend
+// can render "earned / eligible / locked" in a single request.
+export const getMyCourseCertificates = async (req, res) => {
+  try {
+    const studentId = req.user.id;
+
+    const progressList = await Progress.find({ userId: studentId })
+      .populate("courseId", "title thumbnail")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const courseIds = progressList.map((p) => p.courseId?._id).filter(Boolean);
+
+    const certificates = await Certificate.find({
+      studentId,
+      courseId: { $in: courseIds },
+    }).lean();
+
+    const certByCourseId = new Map(certificates.map((c) => [String(c.courseId), c]));
+
+    const courses = progressList
+      .filter((p) => p.courseId) // guard against a Progress doc whose course was deleted
+      .map((p) => {
+        const cert = certByCourseId.get(String(p.courseId._id)) || null;
+        return {
+          courseId: p.courseId._id,
+          title: p.courseId.title,
+          thumbnail: p.courseId.thumbnail,
+          overallProgress: p.overallProgress,
+          completed: p.completed,
+          eligible: p.overallProgress >= CERTIFICATE_ELIGIBILITY_THRESHOLD,
+          certificate: cert
+            ? {
+                id: cert._id,
+                certificateNumber: cert.certificateNumber,
+                url: cert.document?.url,
+                grade: cert.grade,
+                status: cert.status,
+                issuedAt: cert.issuedAt,
+              }
+            : null,
+        };
+      });
+
+    return res.status(200).json({
+      success: true,
+      eligibilityThreshold: CERTIFICATE_ELIGIBILITY_THRESHOLD,
+      courses,
+    });
+  } catch (error) {
+    return handleControllerError(res, error);
+  }
+};
+
+// ─── GENERATE MY CERTIFICATE (student, self-serve) ────────────
+// POST /api/v1/certificates/generate/:courseId
+// Manual fallback for a student who's eligible but doesn't have a
+// certificate yet — e.g. the automatic issuance hook in the progress
+// controller never fired for their doc, or simply hasn't caught up yet.
+export const generateMyCertificate = async (req, res) => {
+  try {
+    const studentId = req.user.id;
+    const { courseId } = req.params;
+
+    if (!isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: "Invalid course id" });
+    }
+
+    const progress = await Progress.findOne({ userId: studentId, courseId });
+    const overallProgress = progress?.overallProgress || 0;
+
+    if (overallProgress < CERTIFICATE_ELIGIBILITY_THRESHOLD) {
+      return res.status(400).json({
+        success: false,
+        message: `You need at least ${CERTIFICATE_ELIGIBILITY_THRESHOLD}% progress to generate a certificate. You're currently at ${overallProgress}%.`,
+      });
+    }
+
+    const { certificate, created } = await issueCertificateForStudentCourse({ studentId, courseId });
+
+    return res.status(created ? 201 : 200).json({
+      success: true,
+      message: created ? "Certificate generated." : "Certificate already existed.",
+      certificate,
+    });
+  } catch (error) {
+    return handleControllerError(res, error);
+  }
+};
+
+// ─── GET ALL CERTIFICATES (admin/instructor) ──────────────────
 export const getAllCertificates = async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
@@ -182,7 +233,7 @@ export const getCertificateById = async (req, res) => {
   }
 };
 
-// ─── GET CERTIFICATES BY STUDENT ─────────────────────────────
+// ─── GET CERTIFICATES BY STUDENT (admin/instructor viewing any student) ─
 export const getCertificatesByStudent = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -216,7 +267,7 @@ export const getCertificatesByStudent = async (req, res) => {
   }
 };
 
-// ─── VERIFY CERTIFICATE (public) ─────────────────────────────
+// ─── VERIFY CERTIFICATE (public, no auth) ─────────────────────
 export const verifyCertificate = async (req, res) => {
   try {
     const { certificateNumber } = req.params;
@@ -253,7 +304,7 @@ export const verifyCertificate = async (req, res) => {
   }
 };
 
-// ─── REVOKE CERTIFICATE ──────────────────────────────────────
+// ─── REVOKE CERTIFICATE (admin/instructor) ────────────────────
 export const revokeCertificate = async (req, res) => {
   try {
     const { certificateId } = req.params;
@@ -282,7 +333,7 @@ export const revokeCertificate = async (req, res) => {
   }
 };
 
-// ─── DELETE CERTIFICATE ──────────────────────────────────────
+// ─── DELETE CERTIFICATE (admin only — hard delete) ────────────
 export const deleteCertificate = async (req, res) => {
   try {
     const { certificateId } = req.params;

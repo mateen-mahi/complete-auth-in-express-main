@@ -3,6 +3,26 @@ import Progress from "../../models/progress.model.js";
 import { emitToUser } from "../../service/SocketService.js";
 import { notifyProgressUpdated, notifyQuizAttempted, notifyCourseCompleted } from "../../service/adminEvents.js";
 import { getCourseTotals, recalcOverallProgress, getOrCreateProgress } from "../../utils/Progresscalculator.js";
+import { maybeAutoIssueCertificate } from "../../utils/certificateService.js";
+
+/**
+ * Shared by both progress endpoints below: after saving, checks whether
+ * this student just became eligible for a certificate on this course and,
+ * if so, auto-issues it and tells their socket about it live. Never
+ * throws — a certificate hiccup should never surface as a progress-save
+ * failure to the student.
+ */
+async function autoIssueCertificateIfEligible(userId, courseId, overallProgress) {
+  const { certificate, created } = await maybeAutoIssueCertificate(userId, courseId, overallProgress);
+  if (created && certificate) {
+    emitToUser(userId, "certificate:issued", {
+      courseId,
+      certificateId: certificate._id,
+      certificateNumber: certificate.certificateNumber,
+      documentUrl: certificate.document?.url,
+    });
+  }
+}
 
 // ── Controllers ─────────────────────────────────────────────────────────
 
@@ -98,6 +118,8 @@ export const updateLectureProgress = async (req, res) => {
     const justCompleted = recalcOverallProgress(progress, totalLectures, totalQuizzes);
     await progress.save();
 
+    await autoIssueCertificateIfEligible(userId, courseId, progress.overallProgress);
+
     emitToUser(userId, "progress:lectureUpdated", {
       courseId,
       lectureId,
@@ -166,6 +188,8 @@ export const submitQuizAttempt = async (req, res) => {
 
     const justCompleted = recalcOverallProgress(progress, totalLectures, totalQuizzes);
     await progress.save();
+
+    await autoIssueCertificateIfEligible(userId, courseId, progress.overallProgress);
 
     emitToUser(userId, "progress:quizAttempted", {
       courseId,

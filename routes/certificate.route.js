@@ -12,6 +12,8 @@ import {
   verifyCertificate,
   revokeCertificate,
   deleteCertificate,
+  getMyCourseCertificates,
+  generateMyCertificate,
 } from "../Controllers/Certificate/certificate.controller.js";
 
 const certificateRouter = express.Router();
@@ -28,37 +30,50 @@ const requireRole = (...roles) => (req, res, next) => {
 // URL params: certificateNumber (string, REQUIRED)
 certificateRouter.get("/verify/:certificateNumber", verifyCertificate);
 
+// GET /api/v1/certificates/my-courses
+// Auth: required (any logged-in student). Derives studentId from req.user.id.
+// Returns every course this student has progress on, merged with certificate
+// status for each (earned / eligible-not-yet-generated / locked).
+certificateRouter.get("/my-courses", getMyCourseCertificates);
+
+// POST /api/v1/certificates/generate/:courseId
+// Auth: required (any logged-in student). Derives studentId from req.user.id.
+// Self-serve manual fallback — student must be at/above the eligibility
+// threshold (checked server-side); safe to call even if a certificate was
+// already auto-issued (idempotent, just returns the existing one).
+// URL params: courseId (ObjectId, REQUIRED)
+certificateRouter.post("/generate/:courseId", generateMyCertificate);
+
 // GET /api/v1/certificates
 // Auth: required, role: admin or instructor
 // Query params (optional): page, limit, courseId, studentId, status ("active"/"revoked")
-certificateRouter.get("/",   getAllCertificates);
+certificateRouter.get("/", requireRole("admin", "instructor"), getAllCertificates);
 
 // GET /api/v1/certificates/student/:studentId
 // Auth: required (student viewing own certs, or admin/instructor viewing any)
 // URL params: studentId (ObjectId, REQUIRED)
 // Query params (optional): page, limit
-certificateRouter.get("/student/:studentId",  getCertificatesByStudent);
+certificateRouter.get("/student/:studentId", getCertificatesByStudent);
 
 // GET /api/v1/certificates/:certificateId
 // Auth: required
 // URL params: certificateId (ObjectId, REQUIRED)
-certificateRouter.get("/:certificateId",  getCertificateById);
+certificateRouter.get("/:certificateId", getCertificateById);
 
 // POST /api/v1/certificates
 // Auth: required, role: admin or instructor
-// Content-Type: multipart/form-data
-// Body: studentId (REQUIRED), courseId (REQUIRED), instructorId (optional), grade (optional)
-// File: field name must match your multer config (e.g. "certificate")
-certificateRouter.post("/",  issueCertificate);
+// Body (JSON): studentId (REQUIRED), courseId (REQUIRED), instructorId (optional), grade (optional)
+// Certificate PDF is generated and uploaded server-side — no file upload from the client.
+certificateRouter.post("/", requireRole("admin", "instructor"), issueCertificate);
 
 // PATCH /api/v1/certificates/:certificateId/revoke
 // Auth: required, role: admin or instructor
 // URL params: certificateId (ObjectId, REQUIRED)
-certificateRouter.patch("/:certificateId/revoke",   revokeCertificate);
+certificateRouter.patch("/:certificateId/revoke", requireRole("admin", "instructor"), revokeCertificate);
 
 // DELETE /api/v1/certificates/:certificateId
 // Auth: required, role: admin only (hard delete — irreversible, use revoke instead when possible)
 // URL params: certificateId (ObjectId, REQUIRED)
-certificateRouter.delete("/:certificateId", deleteCertificate);
+certificateRouter.delete("/:certificateId", requireRole("admin"), deleteCertificate);
 
 export default certificateRouter;
