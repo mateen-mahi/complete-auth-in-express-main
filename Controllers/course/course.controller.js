@@ -316,11 +316,23 @@ export const getEnrolledStudentCourses = async (req, res) => {
     if (!studentId) {
       return res.status(400).json({ success: false, message: "studentId is required" });
     }
-    const courses = await Course.find({ 
-      studentsEnrolled: studentId 
-    });
 
-    return res.status(200).json({ success: true, data: courses });
+    // FIX: this previously ran with no .populate("instructor", ...) at all,
+    // unlike getAllCourses/getFeaturedCourses/getCourseById which all do —
+    // so every course on the "My Courses" list came back with `instructor`
+    // as a raw ObjectId string instead of { username, email, imageUrl }.
+    // That's why Courses.jsx's `typeof course.instructor === "object"`
+    // check failed and silently fell back to the literal "Instructor".
+    const courses = await Course.find({
+      studentsEnrolled: studentId,
+    }).populate("instructor", "username email imageUrl");
+
+    // Also bring this endpoint's shape in line with the others —
+    // Courses.jsx reads lessonsCount on every course card it renders,
+    // enrolled or not.
+    const coursesWithLessons = await attachLessonCounts(courses.map((c) => (c.toObject ? c.toObject() : c)));
+
+    return res.status(200).json({ success: true, data: coursesWithLessons });
   } catch (error) {
     return handleControllerError(res, error);
   }

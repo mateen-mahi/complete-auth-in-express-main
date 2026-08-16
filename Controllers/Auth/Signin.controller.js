@@ -1,7 +1,7 @@
 import userModel from "../../models/user.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { IPinfoWrapper } from "node-ipinfo"; // full API, NOT IPinfoLiteWrapper
+import { IPinfoWrapper } from "node-ipinfo"; 
 import { UAParser } from "ua-parser-js";
 
 const ipInfo = new IPinfoWrapper(process.env.Geolocation_API_KEY);
@@ -50,12 +50,14 @@ const signinController = async (req, res) => {
       });
     }
 
-    if (!user.isVerified) {
-      return res.status(403).json({
-        success: false,
-        message: "Please verify your email before signing in",
-      });
-    }
+if (!user.isVerified) {
+  return res.status(403).json({
+    success: false,
+    message: "Please verify your email before signing in",
+    redirectToVerification: true,
+    email: user.email,
+  });
+}
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);

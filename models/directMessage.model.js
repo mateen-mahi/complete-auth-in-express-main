@@ -10,6 +10,8 @@ const directMessageSchema = new mongoose.Schema(
     senderImageUrl: { type: String, default: null }, // NEW
     toUserId:       { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     toUsername:     { type: String, trim: true },
+    deletedFor:         { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
+deletedForEveryone:  { type: Boolean, default: false },
 
     timestamp: { type: Date, required: true },
   },

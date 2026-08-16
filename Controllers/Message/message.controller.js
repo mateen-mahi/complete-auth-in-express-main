@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 import GlobalMessage from "../../models/globalMessage.model.js";
 import DirectMessage from "../../models/directMessage.model.js";
 
+import { globalMessageBuffer, directMessageBuffer } from "../../service/messageBuffer.js";
+
 const handleError = (res, error) => {
   console.error("[MessageController]", error);
   return res.status(500).json({ success: false, message: "Failed to fetch message history" });
@@ -125,5 +127,92 @@ export const getRecentConversations = async (req, res) => {
   } catch (error) {
     console.error("Error in getRecentConversations:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching recent conversations" });
+  }
+};
+
+export const deleteMessage = async (req, res) => {
+  try {
+    const { chatType, messageId } = req.params;
+    const { scope } = req.body; // 'me' | 'everyone'
+    const userId = req.user.id;
+
+    if (!["global", "dm"].includes(chatType) || !["me", "everyone"].includes(scope)) {
+      return res.status(400).json({ success: false, message: "Invalid delete request" });
+    }
+
+    const Model  = chatType === "global" ? GlobalMessage : DirectMessage;
+    const buffer = chatType === "global" ? globalMessageBuffer : directMessageBuffer;
+
+    const message = await Model.findOne({ id: messageId });
+
+    if (scope === "everyone") {
+      if (message) {
+        if (String(message.senderId) !== String(userId)) {
+          return res.status(403).json({ success: false, message: "You can only delete your own messages for everyone" });
+        }
+        message.deletedForEveryone = true;
+        message.text = "This message was deleted";
+        await message.save();
+      } else {
+        const buffered = buffer.buffer.find((m) => m.id === messageId);
+        if (!buffered) return res.status(404).json({ success: false, message: "Message not found" });
+        if (String(buffered.senderId) !== String(userId)) {
+          return res.status(403).json({ success: false, message: "You can only delete your own messages for everyone" });
+        }
+        buffer.patchById(messageId, (m) => {
+          m.deletedForEveryone = true;
+          m.text = "This message was deleted";
+        });
+      }
+      return res.status(200).json({ success: true, deletedForEveryone: true });
+    }
+
+    // scope === "me"
+    if (message) {
+      await Model.updateOne({ id: messageId }, { $addToSet: { deletedFor: userId } });
+    } else {
+      const patched = buffer.patchById(messageId, (m) => {
+        m.deletedFor = m.deletedFor || [];
+        if (!m.deletedFor.includes(userId)) m.deletedFor.push(userId);
+      });
+      if (!patched) return res.status(404).json({ success: false, message: "Message not found" });
+    }
+    return res.status(200).json({ success: true, deletedForMe: true });
+  } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+// DELETE /api/v1/messages/dm/conversation/:otherUserId
+// "Delete chat" — removes every message in the conversation from the
+// requesting user's view only. The other participant's copy is untouched.
+export const clearConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { otherUserId } = req.params;
+
+    await DirectMessage.updateMany(
+      {
+        $or: [
+          { senderId: userId, toUserId: otherUserId },
+          { senderId: otherUserId, toUserId: userId },
+        ],
+      },
+      { $addToSet: { deletedFor: userId } }
+    );
+
+    directMessageBuffer.patchMany(
+      (m) =>
+        (String(m.senderId) === String(userId) && String(m.toUserId) === String(otherUserId)) ||
+        (String(m.senderId) === String(otherUserId) && String(m.toUserId) === String(userId)),
+      (m) => {
+        m.deletedFor = m.deletedFor || [];
+        if (!m.deletedFor.includes(userId)) m.deletedFor.push(userId);
+      }
+    );
+
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return handleError(res, error);
   }
 };

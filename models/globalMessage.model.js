@@ -8,6 +8,8 @@ const globalMessageSchema = new mongoose.Schema(
     sender:         { type: String, required: true, trim: true }, // username
     senderId:       { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     senderImageUrl: { type: String, default: null }, 
+    deletedFor:         { type: [mongoose.Schema.Types.ObjectId], ref: "User", default: [] },
+deletedForEveryone:  { type: Boolean, default: false },
 
     timestamp: { type: Date, required: true },
   },

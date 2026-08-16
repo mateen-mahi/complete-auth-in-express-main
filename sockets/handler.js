@@ -141,4 +141,35 @@ export const registerSocketHandlers = (io, socket) => {
       io.emit("user-offline", { userId: socket.userId });
     }
   });
+
+  // ── Delete message ───────────────────────────────────────────────────────
+  // Client calls this AFTER the REST delete succeeds, purely to sync live UI.
+  // scope "everyone": redaction is visible to everyone who can see the
+  // message, so we broadcast. scope "me": only the requester's OWN other
+  // devices/tabs need to know — nobody else's view changes.
+  socket.on("delete-message", ({ chatType, messageId, scope, toUserId }) => {
+    if (!chatType || !messageId || !scope) return;
+    const payload = { chatType, messageId, scope };
+
+    if (scope === "everyone") {
+      if (chatType === "global") {
+        io.emit("message-deleted", payload);
+      } else if (chatType === "dm" && toUserId) {
+        io.to(String(toUserId)).emit("message-deleted", payload);
+        io.to(String(socket.userId)).emit("message-deleted", payload);
+      }
+    } else {
+      io.to(String(socket.userId)).emit("message-deleted", payload);
+    }
+  });
+
+  // ── Clear a DM conversation (delete chat, for me only) ──────────────────
+  socket.on("clear-conversation", ({ otherUserId }) => {
+    if (!otherUserId) return;
+    io.to(String(socket.userId)).emit("conversation-cleared", {
+      chatType: "dm",
+      otherUserId: String(otherUserId),
+      scope: "me",
+    });
+  });
 };

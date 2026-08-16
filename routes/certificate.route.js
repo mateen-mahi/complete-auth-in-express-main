@@ -18,12 +18,6 @@ import {
 
 const certificateRouter = express.Router();
 
-const requireRole = (...roles) => (req, res, next) => {
-  if (!req.user || !roles.includes(req.user.role)) {
-    return res.status(403).json({ success: false, message: "Forbidden: insufficient permissions" });
-  }
-  next();
-};
 
 // GET /api/v1/certificates/verify/:certificateNumber
 // Public — no auth. Used for third parties to verify a certificate's authenticity.
@@ -47,7 +41,7 @@ certificateRouter.post("/generate/:courseId", generateMyCertificate);
 // GET /api/v1/certificates
 // Auth: required, role: admin or instructor
 // Query params (optional): page, limit, courseId, studentId, status ("active"/"revoked")
-certificateRouter.get("/", requireRole("admin", "instructor"), getAllCertificates);
+certificateRouter.get("/",  getAllCertificates);
 
 // GET /api/v1/certificates/student/:studentId
 // Auth: required (student viewing own certs, or admin/instructor viewing any)
@@ -64,16 +58,16 @@ certificateRouter.get("/:certificateId", getCertificateById);
 // Auth: required, role: admin or instructor
 // Body (JSON): studentId (REQUIRED), courseId (REQUIRED), instructorId (optional), grade (optional)
 // Certificate PDF is generated and uploaded server-side — no file upload from the client.
-certificateRouter.post("/", requireRole("admin", "instructor"), issueCertificate);
+certificateRouter.post("/",  issueCertificate);
 
 // PATCH /api/v1/certificates/:certificateId/revoke
 // Auth: required, role: admin or instructor
 // URL params: certificateId (ObjectId, REQUIRED)
-certificateRouter.patch("/:certificateId/revoke", requireRole("admin", "instructor"), revokeCertificate);
+certificateRouter.patch("/:certificateId/revoke",  revokeCertificate);
 
 // DELETE /api/v1/certificates/:certificateId
 // Auth: required, role: admin only (hard delete — irreversible, use revoke instead when possible)
 // URL params: certificateId (ObjectId, REQUIRED)
-certificateRouter.delete("/:certificateId", requireRole("admin"), deleteCertificate);
+certificateRouter.delete("/:certificateId",  deleteCertificate);
 
 export default certificateRouter;

@@ -34,13 +34,13 @@ export async function issueCertificateForStudentCourse({ studentId, courseId, in
 
   const [student, course] = await Promise.all([
     User.findById(studentId).select("username email"),
-    Course.findById(courseId).select("title instructorId"),
+    Course.findById(courseId).select("title instructor"),
   ]);
 
   if (!student) throw new Error("Student not found");
   if (!course) throw new Error("Course not found");
 
-  const resolvedInstructorId = instructorId || course.instructorId || null;
+  const resolvedInstructorId = instructorId || course.instructor || null;
   const instructor = resolvedInstructorId
     ? await User.findById(resolvedInstructorId).select("username")
     : null;

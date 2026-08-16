@@ -54,7 +54,29 @@ class MessageBuffer {
     console.log(`[${this.label}Buffer] Shutdown flush — ${this.buffer.length} message(s) remaining`);
     await this._flush();
   }
+
+
+  // Mutates a single buffered (not-yet-flushed) message in place, if present.
+  // Used when a delete request races the 5s flush window.
+  patchById(id, updater) {
+    const idx = this.buffer.findIndex((m) => m.id === id);
+    if (idx === -1) return false;
+    updater(this.buffer[idx]);
+    return true;
+  }
+
+  // Mutates every buffered message matching a predicate — used for
+  // "clear conversation", which targets many messages at once.
+  patchMany(predicate, updater) {
+    let count = 0;
+    this.buffer.forEach((m) => {
+      if (predicate(m)) { updater(m); count++; }
+    });
+    return count;
+  }
 }
+
+
 
 export const globalMessageBuffer = new MessageBuffer(GlobalMessage, "Global");
 export const directMessageBuffer = new MessageBuffer(DirectMessage, "DM");
