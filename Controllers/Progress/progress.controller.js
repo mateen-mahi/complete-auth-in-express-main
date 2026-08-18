@@ -61,16 +61,58 @@ export const getMyProgress = async (req, res) => {
   }
 };
 
+// Whitelisted sortable fields for getMyAllProgress.
+const PROGRESS_LIST_SORTABLE_FIELDS = {
+  overallProgress: "overallProgress",
+  completed: "completed",
+  updatedAt: "updatedAt",
+};
+
+const buildProgressListSort = (sortBy, order) => {
+  const field = PROGRESS_LIST_SORTABLE_FIELDS[sortBy] || "updatedAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
 // GET /api/v1/progress
 export const getMyAllProgress = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const progressList = await Progress.find({ userId })
-      .populate("courseId", "title thumbnail")
-      .sort({ updatedAt: -1 });
+    // Pagination is optional here: if the caller doesn't pass page/limit,
+    // every course's progress is returned (unchanged default behavior) —
+    // a single student rarely has enough courses to need paging, but an
+    // opt-in cap keeps this consistent with every other list endpoint.
+    const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+    const skip = (page - 1) * limit;
+    const sort = buildProgressListSort(req.query.sortBy, req.query.order);
 
-    return res.status(200).json({ success: true, count: progressList.length, progress: progressList });
+    const filter = { userId };
+    if (req.query.completed === "true") filter.completed = true;
+    if (req.query.completed === "false") filter.completed = false;
+
+    let query = Progress.find(filter)
+      .populate("courseId", "title thumbnail")
+      .sort(sort);
+
+    if (hasPagination) {
+      query = query.skip(skip).limit(limit);
+    }
+
+    const [progressList, total] = await Promise.all([
+      query,
+      Progress.countDocuments(filter),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      count: progressList.length,
+      total,
+      ...(hasPagination ? { page, pages: Math.ceil(total / limit) } : {}),
+      progress: progressList,
+    });
   } catch (error) {
     console.error("Error in getMyAllProgress:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching progress list" });

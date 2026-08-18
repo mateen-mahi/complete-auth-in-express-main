@@ -45,10 +45,27 @@ const attachLessonCounts = async (courses) => {
 };
 
 
+// Whitelisted sortable fields for getAllCourses.
+const COURSE_SORTABLE_FIELDS = {
+  title: "title",
+  price: "price",
+  duration: "duration",
+  level: "level",
+  category: "category",
+  createdAt: "createdAt",
+};
+
+const buildCourseSort = (sortBy, order) => {
+  const field = COURSE_SORTABLE_FIELDS[sortBy] || "createdAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
 export const getAllCourses = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const sort = buildCourseSort(req.query.sortBy, req.query.order);
 
     const filter = {};
     if (req.query.category) filter.category = req.query.category;
@@ -61,7 +78,7 @@ export const getAllCourses = async (req, res) => {
       .populate("instructor", "username email imageUrl")
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort(sort);
 
     const total = await Course.countDocuments(filter);
 
@@ -119,17 +136,40 @@ export const getCourseById = async (req, res) => {
 
 export const getFeaturedCourses = async (req, res) => {
   try {
-    const courses = await Course.find({ featured: true })
-      .populate("instructor", "username imageUrl")
-      .limit(10)
-      .sort({ createdAt: -1 });
+    // Now a full paginated listing (was a fixed limit(10) with no page/total
+    // before) — default limit kept at 10 to match prior behavior for
+    // frontends that don't pass any params.
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
+    const skip = (page - 1) * limit;
+    const sort = buildCourseSort(req.query.sortBy, req.query.order);
+
+    const filter = { featured: true };
+    if (req.query.category) filter.category = req.query.category;
+    if (req.query.level) filter.level = req.query.level;
+    if (req.query.search) filter.title = { $regex: req.query.search, $options: "i" };
+
+    const [courses, total] = await Promise.all([
+      Course.find(filter)
+        .populate("instructor", "username imageUrl")
+        .sort(sort)
+        .skip(skip)
+        .limit(limit),
+      Course.countDocuments(filter),
+    ]);
 
     // NEW — adds isEnrolled/studentsEnrolledCount/lessonsCount without removing any existing field
     const currentUserId = req.user?.id;
     const withEnrollment = withEnrollmentInfo(courses, currentUserId);
     const withLessons = await attachLessonCounts(withEnrollment);
 
-    res.status(200).json({ success: true, data: withLessons });
+    res.status(200).json({
+      success: true,
+      data: withLessons,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
   } catch (error) {
     return handleControllerError(res, error);
   }
@@ -317,22 +357,46 @@ export const getEnrolledStudentCourses = async (req, res) => {
       return res.status(400).json({ success: false, message: "studentId is required" });
     }
 
+    // Now a full paginated listing (was a fixed unpaginated find() before) —
+    // default limit set generously since this is typically "my courses"
+    // for a single student, but still capped to avoid unbounded responses.
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+    const skip = (page - 1) * limit;
+    const sort = buildCourseSort(req.query.sortBy, req.query.order);
+
+    const filter = { studentsEnrolled: studentId };
+    if (req.query.category) filter.category = req.query.category;
+    if (req.query.level) filter.level = req.query.level;
+    if (req.query.search) filter.title = { $regex: req.query.search, $options: "i" };
+
     // FIX: this previously ran with no .populate("instructor", ...) at all,
     // unlike getAllCourses/getFeaturedCourses/getCourseById which all do —
     // so every course on the "My Courses" list came back with `instructor`
     // as a raw ObjectId string instead of { username, email, imageUrl }.
     // That's why Courses.jsx's `typeof course.instructor === "object"`
     // check failed and silently fell back to the literal "Instructor".
-    const courses = await Course.find({
-      studentsEnrolled: studentId,
-    }).populate("instructor", "username email imageUrl");
+    const [courses, total] = await Promise.all([
+      Course.find(filter)
+        .populate("instructor", "username email imageUrl")
+        .sort(sort)
+        .skip(skip)
+        .limit(limit),
+      Course.countDocuments(filter),
+    ]);
 
     // Also bring this endpoint's shape in line with the others —
     // Courses.jsx reads lessonsCount on every course card it renders,
     // enrolled or not.
     const coursesWithLessons = await attachLessonCounts(courses.map((c) => (c.toObject ? c.toObject() : c)));
 
-    return res.status(200).json({ success: true, data: coursesWithLessons });
+    return res.status(200).json({
+      success: true,
+      data: coursesWithLessons,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
   } catch (error) {
     return handleControllerError(res, error);
   }

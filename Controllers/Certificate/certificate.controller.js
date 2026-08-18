@@ -36,6 +36,36 @@ const getPagination = (query) => {
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
+// Whitelisted sortable fields for getAllCertificates.
+const CERTIFICATE_SORTABLE_FIELDS = {
+  status: "status",
+  grade: "grade",
+  issuedAt: "issuedAt",
+  certificateNumber: "certificateNumber",
+};
+
+const buildCertificateSort = (sortBy, order) => {
+  const field = CERTIFICATE_SORTABLE_FIELDS[sortBy] || "issuedAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
+// Shared by getCertificatesByStudent — narrows a student's own certificate
+// list by status/course without duplicating getAllCertificates' full filter
+// (studentId there is a separate top-level admin lookup, kept as-is).
+const CERTIFICATE_FILTERABLE_STATUSES = ["active", "revoked"];
+
+const buildStudentCertificateFilter = (query) => {
+  const filter = {};
+  if (query.status && CERTIFICATE_FILTERABLE_STATUSES.includes(query.status)) {
+    filter.status = query.status;
+  }
+  if (query.courseId && isValidObjectId(query.courseId)) {
+    filter.courseId = query.courseId;
+  }
+  return filter;
+};
+
 // ─── ISSUE CERTIFICATE (admin/instructor manual issuance) ────
 export const issueCertificate = async (req, res) => {
   try {
@@ -163,10 +193,12 @@ export const generateMyCertificate = async (req, res) => {
   }
 };
 
-// ─── GET ALL CERTIFICATES (admin/instructor) ──────────────────
 export const getAllCertificates = async (req, res) => {
   try {
-    const { page, limit, skip } = getPagination(req.query);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
     const { courseId, studentId, status } = req.query;
 
     const filter = {};
@@ -184,24 +216,26 @@ export const getAllCertificates = async (req, res) => {
     }
     if (status) filter.status = status;
 
-    const [certificates, total] = await Promise.all([
-      Certificate.find(filter)
-        .sort({ issuedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("studentId", "username email")
-        .populate("courseId", "title")
-        .populate("instructorId", "username email")
-        .lean(),
-      Certificate.countDocuments(filter),
-    ]);
+    const sort = buildCertificateSort(req.query.sortBy, req.query.order);
+
+    const totalCertificates = await Certificate.countDocuments(filter);
+
+    const certificates = await Certificate.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .populate("studentId", "username email")
+      .populate("courseId", "title")
+      .populate("instructorId", "username email")
+      .lean();
 
     return res.status(200).json({
       success: true,
       data: certificates,
-      total,
-      page,
-      pages: Math.ceil(total / limit),
+      totalCertificates,
+      totalPages: Math.ceil(totalCertificates / limit),
+      currentPage: page,
+      count: certificates.length,
     });
   } catch (error) {
     return handleControllerError(res, error);
@@ -242,25 +276,29 @@ export const getCertificatesByStudent = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid studentId format" });
     }
 
-    const { page, limit, skip } = getPagination(req.query);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    const sort = buildCertificateSort(req.query.sortBy, req.query.order);
+    const filter = { studentId, ...buildStudentCertificateFilter(req.query) };
 
-    const [certificates, total] = await Promise.all([
-      Certificate.find({ studentId })
-        .sort({ issuedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate("courseId", "title")
-        .populate("instructorId", "username email")
-        .lean(),
-      Certificate.countDocuments({ studentId }),
-    ]);
+    const totalCertificates = await Certificate.countDocuments(filter);
+
+    const certificates = await Certificate.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .populate("courseId", "title")
+      .populate("instructorId", "username email")
+      .lean();
 
     return res.status(200).json({
       success: true,
       data: certificates,
-      total,
-      page,
-      pages: Math.ceil(total / limit),
+      totalCertificates,
+      totalPages: Math.ceil(totalCertificates / limit),
+      currentPage: page,
+      count: certificates.length,
     });
   } catch (error) {
     return handleControllerError(res, error);

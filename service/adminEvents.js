@@ -87,3 +87,7 @@ export const notifyCourseCompleted = ({ userId, userEmail, courseId, courseTitle
     courseTitle,
     at: new Date().toISOString(),
   });
+  
+  
+  export const notifyDashboardStats = (stats) =>
+  emitAdminEvent("dashboard:stats", stats);

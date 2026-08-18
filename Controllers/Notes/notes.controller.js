@@ -46,20 +46,51 @@ export const createNote = async (req, res) => {
   }
 };
 
+// Whitelisted sortable fields for getAllNotes. isPinned always leads so
+// pinned notes stay on top regardless of the chosen secondary sort.
+const NOTE_SORTABLE_FIELDS = {
+  title: "title",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
+const buildNoteSort = (sortBy, order) => {
+  const field = NOTE_SORTABLE_FIELDS[sortBy] || "updatedAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { isPinned: -1, [field]: direction };
+};
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// isPinned filter is intentionally separate from the always-pinned-first
+// sort above — this lets the frontend show ONLY pinned or ONLY unpinned
+// notes when needed (e.g. a dedicated "Pinned" tab).
+const buildNoteFilter = (query) => {
+  const filter = {};
+  if (query.isPinned === "true") filter.isPinned = true;
+  if (query.isPinned === "false") filter.isPinned = false;
+  if (query.search && query.search.trim()) {
+    filter.title = { $regex: escapeRegex(query.search.trim()), $options: "i" };
+  }
+  return filter;
+};
+
 // ─── GET ALL NOTES (admin or public) ──────────────────────
 // Returns all notes in the system – can be restricted later.
 export const getAllNotes = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
+    const sort = buildNoteSort(req.query.sortBy, req.query.order);
+    const filter = buildNoteFilter(req.query);
 
     const [notes, total] = await Promise.all([
-      Note.find()
-        .sort({ isPinned: -1, updatedAt: -1 })
+      Note.find(filter)
+        .sort(sort)
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Note.countDocuments(),
+      Note.countDocuments(filter),
     ]);
 
     res.status(200).json({
@@ -182,14 +213,16 @@ export const getNotesByUserId = async (req, res) => {
     const { userId } = req.params;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
+    const sort = buildNoteSort(req.query.sortBy, req.query.order);
+    const filter = { userId, ...buildNoteFilter(req.query) };
 
     const [notes, total] = await Promise.all([
-      Note.find({ userId })
-        .sort({ isPinned: -1, updatedAt: -1 })
+      Note.find(filter)
+        .sort(sort)
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Note.countDocuments({ userId }),
+      Note.countDocuments(filter),
     ]);
 
     res.status(200).json({

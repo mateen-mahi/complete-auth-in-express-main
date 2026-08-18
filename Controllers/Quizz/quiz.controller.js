@@ -1,5 +1,8 @@
+import mongoose from "mongoose";
 import Quiz from "../../models/quiz.model.js";
 import Course from "../../models/courses.model.js";
+
+const MAX_LIMIT = 50;
 
 const handleControllerError = (res, error) => {
   console.error(error);
@@ -15,6 +18,37 @@ const handleControllerError = (res, error) => {
   return res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
 };
 
+// Whitelisted sortable fields for getAllQuizzes.
+const QUIZ_SORTABLE_FIELDS = {
+  title: "title",
+  subject: "subject",
+  totalTime: "totalTime",
+  createdAt: "createdAt",
+};
+
+const buildQuizSort = (sortBy, order) => {
+  const field = QUIZ_SORTABLE_FIELDS[sortBy] || "createdAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildQuizFilter = (query) => {
+  const filter = {};
+  if (query.courseId) {
+    if (!mongoose.Types.ObjectId.isValid(query.courseId)) return { __invalidCourseId: true };
+    filter.courseId = query.courseId;
+  }
+  if (query.subject && query.subject.trim()) {
+    filter.subject = { $regex: escapeRegex(query.subject.trim()), $options: "i" };
+  }
+  if (query.search && query.search.trim()) {
+    filter.title = { $regex: escapeRegex(query.search.trim()), $options: "i" };
+  }
+  return filter;
+};
+
 // ─────────────────────────────────────────────────────────────
 // 1. GET all quizzes (admin list) – paginated, no questions
 // ─────────────────────────────────────────────────────────────
@@ -22,14 +56,21 @@ export const getAllQuizzes = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const sort = buildQuizSort(req.query.sortBy, req.query.order);
+    const filter = buildQuizFilter(req.query);
 
-    const quizzes = await Quiz.find()
+    if (filter.__invalidCourseId) {
+      return res.status(400).json({ success: false, message: "Invalid courseId format" });
+    }
+
+    const quizzes = await Quiz.find(filter)
       .populate("courseId", "title")
+      .sort(sort)
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
 
-    const total = await Quiz.countDocuments();
+    const total = await Quiz.countDocuments(filter);
 
     const quizzesSummary = quizzes.map((quiz) => {
       const { questions, ...rest } = quiz;
@@ -252,15 +293,45 @@ export const deleteQuizzesByCourseId = async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // 8. GET all quizzes for a specific course (public view)
 // ─────────────────────────────────────────────────────────────
+// Quizzes within a course have a natural sequence ("order" field) that
+// the curriculum UI depends on — this stays the default sort so existing
+// frontends keep working unchanged. sortBy lets a caller opt into a
+// different view (e.g. an admin screen sorting by title).
+const buildCourseQuizSort = (sortBy, order) => {
+  if (sortBy && QUIZ_SORTABLE_FIELDS[sortBy]) {
+    return { [QUIZ_SORTABLE_FIELDS[sortBy]]: order === "asc" ? 1 : -1 };
+  }
+  return { order: 1 };
+};
+
 export const getQuizzesByCourseId = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const course = await Course.findById(courseId)
-      .populate({
-        path: 'quizzes',
-        options: { sort: { order: 1 } },
-      })
-      .lean();
+
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Invalid courseId format" });
+    }
+
+    // Pagination is optional here: if the caller doesn't pass page/limit,
+    // every quiz in the course is returned (unchanged default behavior).
+    const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || MAX_LIMIT, 1), MAX_LIMIT);
+    const skip = (page - 1) * limit;
+    const sort = buildCourseQuizSort(req.query.sortBy, req.query.order);
+
+    const populateOptions = { sort };
+    if (hasPagination) {
+      populateOptions.skip = skip;
+      populateOptions.limit = limit;
+    }
+
+    const [course, total] = await Promise.all([
+      Course.findById(courseId)
+        .populate({ path: "quizzes", options: populateOptions })
+        .lean(),
+      Quiz.countDocuments({ courseId }),
+    ]);
 
     if (!course) {
       return res.status(404).json({
@@ -277,6 +348,8 @@ export const getQuizzesByCourseId = async (req, res) => {
     res.status(200).json({
       success: true,
       data: quizzes,
+      total,
+      ...(hasPagination ? { page, pages: Math.ceil(total / limit) } : {}),
     });
   } catch (error) {
     return handleControllerError(res, error);

@@ -2,12 +2,26 @@ import mongoose from "mongoose";
 import Progress from "../../models/progress.model.js";
 import Course from "../../models/courses.model.js";
 
+// Whitelisted sortable fields for getCourseProgress.
+const PROGRESS_SORTABLE_FIELDS = {
+  overallProgress: "overallProgress",
+  completed: "completed",
+  updatedAt: "updatedAt",
+};
+
+const buildProgressSort = (sortBy, order) => {
+  const field = PROGRESS_SORTABLE_FIELDS[sortBy] || "overallProgress";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
 // GET /api/admin/progress/course/:courseId
-// All students' progress for one course. Supports ?page=&limit=&completed=true/false
+// All students' progress for one course. Supports ?page=&limit=&completed=true/false&sortBy=&order=
 export const getCourseProgress = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { page = 1, limit = 20, completed } = req.query;
+    const sort = buildProgressSort(req.query.sortBy, req.query.order);
 
     if (!mongoose.isValidObjectId(courseId)) {
       return res.status(400).json({ success: false, message: "Invalid course id" });
@@ -29,7 +43,7 @@ export const getCourseProgress = async (req, res) => {
       Progress.find(filter)
         .populate("userId", "username email")
         .select("userId overallProgress completed lectures quizzes updatedAt")
-        .sort({ overallProgress: -1 })
+        .sort(sort)
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum),
       Progress.countDocuments(filter),

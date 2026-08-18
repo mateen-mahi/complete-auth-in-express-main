@@ -4,6 +4,57 @@ import cloudinary from "../../config/cloudinary.js";
 import bcrypt from "bcryptjs";
 import { notifyUserRegistered } from "../../service/adminEvents.js";
 
+// Whitelisted roles/genders accepted by the ?role= and ?gender= filters.
+// Anything outside these lists is ignored rather than passed straight to
+// Mongo, so a bad query param can't silently return an empty/wrong result.
+const USER_FILTERABLE_ROLES = ["student", "instructor", "admin", "super-admin"];
+const USER_FILTERABLE_GENDERS = ["male", "female", "other"];
+
+const buildUserFilter = (query) => {
+  const filter = {};
+
+  if (query.role && USER_FILTERABLE_ROLES.includes(query.role)) {
+    filter.role = query.role;
+  }
+
+  if (query.gender && USER_FILTERABLE_GENDERS.includes(query.gender)) {
+    filter.gender = query.gender;
+  }
+
+  if (query.isVerified === "true") filter.isVerified = true;
+  if (query.isVerified === "false") filter.isVerified = false;
+
+  // Free-text search across username/email — same "user typed something"
+  // input as the search bar, kept separate from the exact-match filters.
+  if (query.search && query.search.trim()) {
+    const safe = query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { username: { $regex: safe, $options: "i" } },
+      { email: { $regex: safe, $options: "i" } },
+    ];
+  }
+
+  return filter;
+};
+
+// Whitelisted sortable fields for getAllUsers, mapped to their schema paths.
+// Prevents arbitrary/unindexed field sorting via query injection.
+const USER_SORTABLE_FIELDS = {
+  username: "username",
+  email: "email",
+  role: "role",
+  gender: "gender",
+  isVerified: "isVerified",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
+const buildUserSort = (sortBy, order) => {
+  const field = USER_SORTABLE_FIELDS[sortBy] || "createdAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
 // ─────────────────────────────────────────────────────────────
 // 1. GET ALL USERS 
 // ─────────────────────────────────────────────────────────────
@@ -12,12 +63,15 @@ export const getAllUsers = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
+    const sort = buildUserSort(req.query.sortBy, req.query.order);
+    const filter = buildUserFilter(req.query);
 
-    const totalUsers = await userModel.countDocuments();
+    const totalUsers = await userModel.countDocuments(filter);
 
     const users = await userModel
-      .find()
+      .find(filter)
       .select("username email gender role isVerified createdAt updatedAt imageUrl")
+      .sort(sort)
       .skip(skip)
       .limit(limit);
 

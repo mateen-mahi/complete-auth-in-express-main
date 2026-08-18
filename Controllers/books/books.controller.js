@@ -34,6 +34,18 @@ const getPagination = (query) => {
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
+// Whitelisted sortable fields for getAllBooks.
+const BOOK_SORTABLE_FIELDS = {
+  title: "title",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
+const buildBookSort = (sortBy, order) => {
+  const field = BOOK_SORTABLE_FIELDS[sortBy] || "createdAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
 // ─── ADD NEW BOOK ───────────────────────────────────────────
 export const addNewBook = async (req, res) => {
   try {
@@ -92,6 +104,7 @@ export const getAllBooks = async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
     const courseId = req.query.courseId;
+    const search = req.query.search;
 
     if (courseId && !isValidObjectId(courseId)) {
       return res.status(400).json({
@@ -101,10 +114,14 @@ export const getAllBooks = async (req, res) => {
     }
 
     const filter = courseId ? { courseId } : {};
+    if (search && search.trim()) {
+      filter.title = { $regex: escapeRegex(search.trim()), $options: "i" };
+    }
+    const sort = buildBookSort(req.query.sortBy, req.query.order);
 
     const [books, total] = await Promise.all([
       Book.find(filter)
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .populate("courseId", "title")
@@ -163,10 +180,11 @@ export const getBooksByCourseId = async (req, res) => {
     }
 
     const { page, limit, skip } = getPagination(req.query);
+    const sort = buildBookSort(req.query.sortBy, req.query.order);
 
     const [books, total] = await Promise.all([
       Book.find({ courseId })
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .lean(),
@@ -291,6 +309,7 @@ export const searchBooks = async (req, res) => {
     }
 
     const safeQuery = escapeRegex(q.trim());
+    const sort = buildBookSort(req.query.sortBy, req.query.order);
 
     const searchQuery = {
       $or: [
@@ -301,7 +320,7 @@ export const searchBooks = async (req, res) => {
 
     const [books, total] = await Promise.all([
       Book.find(searchQuery)
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .populate("courseId", "title")

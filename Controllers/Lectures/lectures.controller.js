@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Lecture from "../../models/lectures.model.js";
 import Course from "../../models/courses.model.js";
 
@@ -19,13 +20,31 @@ const handleControllerError = (res, error) => {
 
 const MAX_LIMIT = 50;
 
+// Whitelisted sortable fields for getAllLectures.
+const LECTURE_SORTABLE_FIELDS = {
+  title: "title",
+  duration: "duration",
+  createdAt: "createdAt",
+};
+
+const buildLectureSort = (sortBy, order) => {
+  const field = LECTURE_SORTABLE_FIELDS[sortBy] || "createdAt";
+  const direction = order === "asc" ? 1 : -1;
+  return { [field]: direction };
+};
+
+// Free-text search over lecture title — separate from the exact courseId
+// filter already supported below.
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export const getAllLectures = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), MAX_LIMIT);
     const skip = (page - 1) * limit;
+    const sort = buildLectureSort(req.query.sortBy, req.query.order);
 
-    const { courseId } = req.query;
+    const { courseId, search } = req.query;
 
     const filter = {};
     if (courseId) {
@@ -34,10 +53,13 @@ export const getAllLectures = async (req, res) => {
       }
       filter.course = courseId;
     }
+    if (search && search.trim()) {
+      filter.title = { $regex: escapeRegex(search.trim()), $options: "i" };
+    }
 
     const [lectures, total] = await Promise.all([
       Lecture.find(filter)
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(limit)
         .populate("course", "title category level") // only pull fields you actually need
@@ -194,26 +216,60 @@ export const deleteLecture = async (req, res) => {
 
 
 
+// Lectures within a course have a natural sequence ("order" field) that
+// the player/curriculum UI depends on — this stays the default sort so
+// existing frontends keep working unchanged. sortBy lets a caller opt
+// into a different view (e.g. an admin screen sorting by duration).
+const buildCourseLectureSort = (sortBy, order) => {
+  if (sortBy && LECTURE_SORTABLE_FIELDS[sortBy]) {
+    return { [LECTURE_SORTABLE_FIELDS[sortBy]]: order === "asc" ? 1 : -1 };
+  }
+  return { order: 1 };
+};
+
 export const getLecturesByCourseId = async (req, res) => {
   try {
     const { courseId } = req.params;
 
-    const course = await Course.findById(courseId)
-      .populate({
-        path: 'lectures',
-        options: { sort: { order: 1 } },
-      })
-      .lean(); 
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({ success: false, message: "Invalid courseId format" });
+    }
+
+    // Pagination is optional here: if the caller doesn't pass page/limit,
+    // every lecture in the course is returned (unchanged default
+    // behavior) — courses rarely have enough lectures to need paging,
+    // but large ones (or an admin bulk view) can opt in.
+    const hasPagination = req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || MAX_LIMIT, 1), MAX_LIMIT);
+    const skip = (page - 1) * limit;
+    const sort = buildCourseLectureSort(req.query.sortBy, req.query.order);
+
+    const populateOptions = { sort };
+    if (hasPagination) {
+      populateOptions.skip = skip;
+      populateOptions.limit = limit;
+    }
+
+    const [course, total] = await Promise.all([
+      Course.findById(courseId)
+        .populate({ path: "lectures", options: populateOptions })
+        .lean(),
+      Lecture.countDocuments({ course: courseId }),
+    ]);
+
     if (!course) {
       return res.status(404).json({
         success: false,
-        message: 'Course not found',
+        message: "Course not found",
       });
     }
 
     res.status(200).json({
       success: true,
       data: course.lectures || [],
+      total,
+      ...(hasPagination ? { page, pages: Math.ceil(total / limit) } : {}),
     });
   } catch (error) {
     return handleControllerError(res, error);
