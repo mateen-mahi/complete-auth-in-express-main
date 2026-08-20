@@ -42,6 +42,7 @@ export const getDashboardStatsData = async () => {
   const oneDayAgo     = new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000);
   const sevenDaysAgo  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const sixMonthsAgo  = new Date(now.getFullYear(), now.getMonth() - 5, 1); // 1st of month, 6 months back — for trend charts
 
   const [dau, wau, mau] = await Promise.all([
     activeUsersSince(oneDayAgo),
@@ -68,6 +69,8 @@ export const getDashboardStatsData = async () => {
     ordersByStatus,
     revenueByGateway,
     topCourses,
+    signupTrendAgg,
+    revenueTrendAgg,
   ] = await Promise.all([
     User.countDocuments({}),
     User.countDocuments({ createdAt: { $gte: startOfThisWeek } }),
@@ -159,6 +162,29 @@ export const getDashboardStatsData = async () => {
       { $sort: { enrolledCount: -1 } },
       { $limit: 5 },
     ]),
+
+    // Last 6 months of signups, grouped by calendar month — feeds the real
+    // SignupTrendChart (replaces the old DUMMY_USERS-derived version).
+    User.aggregate([
+      { $match: { createdAt: { $gte: sixMonthsAgo } } },
+      {
+        $group: {
+          _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+
+    // Same shape, for completed-order revenue — feeds RevenueTrendChart.
+    Order.aggregate([
+      { $match: { paymentStatus: "completed", createdAt: { $gte: sixMonthsAgo } } },
+      {
+        $group: {
+          _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+          total: { $sum: "$amountPaid" },
+        },
+      },
+    ]),
   ]);
 
   const roleMap        = Object.fromEntries(usersByRole.map((r) => [r._id, r.count]));
@@ -175,6 +201,19 @@ export const getDashboardStatsData = async () => {
   const completionRate = progressStats.totalRecords > 0
     ? Math.round((progressStats.totalCompleted / progressStats.totalRecords) * 100)
     : 0;
+
+  // Build a fixed 6-month scaffold (oldest → newest) so a month with zero
+  // signups/revenue still renders as a 0 point instead of a gap in the chart.
+  const monthScaffold = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    return { year: d.getFullYear(), month: d.getMonth() + 1, label: d.toLocaleDateString("en-US", { month: "short" }) };
+  });
+
+  const signupTrendMap  = new Map(signupTrendAgg.map((r) => [`${r._id.year}-${r._id.month}`, r.count]));
+  const revenueTrendMap = new Map(revenueTrendAgg.map((r) => [`${r._id.year}-${r._id.month}`, r.total]));
+
+  const signupTrend  = monthScaffold.map((m) => ({ month: m.label, count: signupTrendMap.get(`${m.year}-${m.month}`) || 0 }));
+  const revenueTrend = monthScaffold.map((m) => ({ month: m.label, total: Math.round(revenueTrendMap.get(`${m.year}-${m.month}`) || 0) }));
 
   return {
     generatedAt: now.toISOString(),
@@ -265,6 +304,11 @@ export const getDashboardStatsData = async () => {
       issuedThisWeek: certsThisWeek,
       issuedLastWeek: certsLastWeek,
       change: calculateGrowth(certsThisWeek, certsLastWeek),
+    },
+
+    trends: {
+      signups: signupTrend,   // [{ month: "Mar", count: 12 }, ...] — oldest → newest, 6 months
+      revenue: revenueTrend,  // [{ month: "Mar", total: 4200 }, ...]
     },
   };
 };

@@ -6,7 +6,6 @@ import express from "express";
 
 import {
   issueCertificate,
-  getAllCertificates,
   getCertificateById,
   getCertificatesByStudent,
   verifyCertificate,
@@ -41,7 +40,6 @@ certificateRouter.post("/generate/:courseId", generateMyCertificate);
 // GET /api/v1/certificates
 // Auth: required, role: admin or instructor
 // Query params (optional): page, limit, courseId, studentId, status ("active"/"revoked")
-certificateRouter.get("/",  getAllCertificates);
 
 // GET /api/v1/certificates/student/:studentId
 // Auth: required (student viewing own certs, or admin/instructor viewing any)

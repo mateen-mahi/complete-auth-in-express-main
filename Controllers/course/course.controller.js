@@ -74,7 +74,7 @@ export const getAllCourses = async (req, res) => {
     if (req.query.search) filter.title = { $regex: req.query.search, $options: "i" };
 
     const courses = await Course.find(filter)
-      .select("-studentsEnrolled") 
+      // .select("-studentsEnrolled") 
       .populate("instructor", "username email imageUrl")
       .skip((page - 1) * limit)
       .limit(limit)

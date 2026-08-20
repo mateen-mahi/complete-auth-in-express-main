@@ -355,3 +355,33 @@ export const addNewUser = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error during new user creation" });
   }
 };
+
+
+
+export const updateUserPasswordForAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: "New password is required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: "New password must be at least 6 characters" });
+    }
+
+    const user = await userModel.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.password = await bcrypt.hash(password, 10);
+    await user.save();
+
+    return res.status(200).json({ success: true, message: "Password updated successfully" });
+  } catch (error) {
+    console.log("Error in update user password api: ", error);
+    return res.status(500).json({ success: false, message: "Server error during password update" });
+  }
+};

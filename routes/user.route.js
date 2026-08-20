@@ -11,7 +11,6 @@ import CheckAuthController from "../Controllers/Auth/CheckAuth.controller.js";
 import {OtpSenderController,VerifyUserController} from "../Controllers/Auth/VerifyUser.controller.js";
 
 import {
-  getAllUsers,
   getSingleUser,
   editUser,
   deleteUser,
@@ -44,7 +43,6 @@ userRoutes.get("/check-auth", verifyAuth, CheckAuthController);
 
 userRoutes.post("/add-user", verifyAuth, addNewUser);
 
-userRoutes.get("/all-users", verifyAuth, getAllUsers);
 userRoutes.get("/single-user/:id", verifyAuth, getSingleUser);
 
 userRoutes.put("/update-password/:id", verifyAuth, updateUserPassword);

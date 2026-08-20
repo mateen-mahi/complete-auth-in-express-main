@@ -29,6 +29,7 @@ const allowedOrigins = [
   "http://localhost:8080",
   "http://localhost:5173",
   "https://m-mateen.netlify.app",
+  "https://learnixpr.netlify.app",
 ];
 
 const app = express();

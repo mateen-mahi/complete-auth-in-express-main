@@ -7,7 +7,8 @@ const courseSchema = new mongoose.Schema(
     instructor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     category: { type: String, required: true, trim: true },
     price: { type: Number, required: true, min: 0 },
-    duration: { type: Number, required: true, min: 0 },
+    // duration: { type: Number, required: true, min: 0 },
+    duration: { type: String, required: true, min: 0 },
     studentsEnrolled: [
       { type: mongoose.Schema.Types.ObjectId, ref: "User" }
     ],

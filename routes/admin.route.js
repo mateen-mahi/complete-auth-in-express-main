@@ -7,6 +7,9 @@ import {
   getCourseAnalytics,
   getOverallAnalytics,
 } from "../Controllers/Progress/adminProgress.controller.js";
+import { getAllUsers, updateUserPasswordForAdmin } from "../Controllers/Auth/AllUsers.controller.js";
+import { getAllComplaints } from "../Controllers/Complaint/complaint.controller.js";
+import { getAllCertificates } from "../Controllers/Certificate/certificate.controller.js";
 
 const adminRoutes = express.Router();
 
@@ -16,6 +19,10 @@ adminRoutes.get("/analytics", getOverallAnalytics);
 adminRoutes.get("/course/:courseId/analytics", getCourseAnalytics);
 adminRoutes.get("/course/:courseId/student/:userId", getStudentProgressInCourse);
 adminRoutes.get("/course/:courseId", getCourseProgress);
+adminRoutes.get("/users", getAllUsers);
+adminRoutes.put("/users/update-password/:id",updateUserPasswordForAdmin);
+adminRoutes.get("/complaints", getAllComplaints);
+adminRoutes.get("/certificates",  getAllCertificates);
 
 export default adminRoutes;
 
