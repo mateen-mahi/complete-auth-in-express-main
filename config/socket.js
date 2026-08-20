@@ -1,5 +1,5 @@
 import { Server } from "socket.io";
-import { registerSocketHandlers } from "../sockets/handler.js";
+import { registerSocketHandlers, getOnlineUserIds } from "../sockets/handler.js";
 import { startSystemStatsEmitter, stopSystemStatsEmitter } from "../service/systemStatsEmitter.js";
 import { startDashboardStatsEmitter, stopDashboardStatsEmitter } from "../service/dashboardStatsEmitter.js";
 import User from "../models/user.model.js";
@@ -54,6 +54,12 @@ export const initSocket = (server, allowedOrigins) => {
     // distinct from the main app's online-user count.
     const adminCount = adminNamespace.sockets.size;
     adminNamespace.emit("admin:presence", { onlineAdmins: adminCount });
+
+    // Live "how many actual users are on the site right now" — this admin
+    // just connected, so they wouldn't otherwise see this number until the
+    // next user connects/disconnects on the main namespace (see handler.js).
+    socket.emit("site:onlineUsers", { count: getOnlineUserIds(io).length });
+
     if (adminCount === 1) {
     startSystemStatsEmitter();
     startDashboardStatsEmitter();
@@ -92,4 +98,3 @@ export const getIO = () => {
   if (!io) throw new Error("[Socket] io not initialized — call initSocket() first");
   return io;
 };
-

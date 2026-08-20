@@ -3,12 +3,23 @@ import { globalMessageBuffer, directMessageBuffer } from "../service/messageBuff
 
 // Enumerates unique userIds currently connected — a user can have multiple
 // sockets open (multiple tabs/devices), so this dedupes to real "who's online".
-function getOnlineUserIds(io) {
+// Exported because config/socket.js also needs it (to tell a freshly-connected
+// admin the current site-wide online count without waiting for the next
+// user connect/disconnect event).
+export function getOnlineUserIds(io) {
   const ids = new Set();
   for (const [, s] of io.sockets.sockets) {
     if (s.userId) ids.add(s.userId);
   }
   return Array.from(ids);
+}
+
+// Pushes the current site-wide online-user COUNT to every connected admin.
+// This is what powers "users online right now" in LiveActivityPanel — it's
+// intentionally separate from admin:presence (which tracks admins watching
+// the dashboard, not regular users on the site).
+function broadcastOnlineUserCount(io) {
+  io.of("/admin").emit("site:onlineUsers", { count: getOnlineUserIds(io).length });
 }
 
 export const registerSocketHandlers = (io, socket) => {
@@ -20,6 +31,7 @@ export const registerSocketHandlers = (io, socket) => {
   // frontend (registered once at app boot), not inside a specific page.
   io.emit("user-online", { userId: socket.userId });
   socket.emit("online-users", { userIds: getOnlineUserIds(io) });
+  broadcastOnlineUserCount(io);
 
   // ── Join a course/lecture room ──────────────────────────────────────────
   socket.on("join-room", (roomId) => {
@@ -140,6 +152,7 @@ export const registerSocketHandlers = (io, socket) => {
     if (!stillConnected) {
       io.emit("user-offline", { userId: socket.userId });
     }
+    broadcastOnlineUserCount(io);
   });
 
   // ── Delete message ───────────────────────────────────────────────────────
