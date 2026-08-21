@@ -68,12 +68,18 @@ export const getAllUsers = async (req, res) => {
 
     const totalUsers = await userModel.countDocuments(filter);
 
-    const users = await userModel
+    let query = userModel
       .find(filter)
       .select("username email gender role isVerified createdAt updatedAt imageUrl")
-      .sort(sort)
-      .skip(skip)
-      .limit(limit);
+      .sort(sort);
+
+    const hasPagination = req.query.page || req.query.limit;
+
+    if (hasPagination) {
+      query = query.skip(skip).limit(limit);
+    }
+
+    const users = await query;
 
     const usersWithImage = users.map((user) => {
       const userObj = user.toObject();
@@ -94,6 +100,44 @@ export const getAllUsers = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error while fetching users" });
   }
 };
+
+
+// export const getAllUsers = async (req, res) => {
+//   try {
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 10;
+//     const skip = (page - 1) * limit;
+//     const sort = buildUserSort(req.query.sortBy, req.query.order);
+//     const filter = buildUserFilter(req.query);
+
+//     const totalUsers = await userModel.countDocuments(filter);
+
+//     const users = await userModel
+//       .find(filter)
+//       .select("username email gender role isVerified createdAt updatedAt imageUrl")
+//       .sort(sort)
+//       .skip(skip)
+//       .limit(limit);
+
+//     const usersWithImage = users.map((user) => {
+//       const userObj = user.toObject();
+//       userObj.imageUrl = userObj.imageUrl || null;
+//       return userObj;
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       count: usersWithImage.length,
+//       totalUsers,
+//       totalPages: Math.ceil(totalUsers / limit),
+//       currentPage: page,
+//       users: usersWithImage,
+//     });
+//   } catch (error) {
+//     console.log("Error in get all users api: ", error);
+//     return res.status(500).json({ success: false, message: "Server error while fetching users" });
+//   }
+// };
 
 // ─────────────────────────────────────────────────────────────
 // 2. GET SINGLE USER
